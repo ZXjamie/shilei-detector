@@ -60,24 +60,32 @@ def calc_liuqin(ri_gan: str, dizhi: str) -> str:
     return ''
 
 
-def get_changsheng_position(ri_zhi: str, dipan: str) -> str:
-    """计算地支在某个地盘上的十二长生状态"""
-    if not ri_zhi or not dipan:
+def get_changsheng_position(ri_gan: str, dizhi: str) -> str:
+    """计算地支相对于日干的十二长生状态
+    
+    用天干五行计算，不用寄宫
+    甲乙木长生在亥，丙丁火长生在寅，戊己土长生在寅，庚辛金长生在巳，壬癸水长生在申
+    """
+    if not ri_gan or not dizhi:
         return ''
-    # 日支五行
-    wuxing = DIZHI_WUXING.get(ri_zhi, '')
+    
+    # 天干五行
+    wuxing = TIANGAN_WUXING.get(ri_gan, '')
     if not wuxing:
         return ''
+    
     # 五行长生起始地支
     changsheng_start = {'木': '亥', '火': '寅', '土': '寅', '金': '巳', '水': '申'}
     start = changsheng_start.get(wuxing, '')
     if not start:
         return ''
+    
     # 计算位置差
     dizhi_order = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥']
     start_idx = dizhi_order.index(start)
-    dipan_idx = dizhi_order.index(dipan)
-    diff = (dipan_idx - start_idx) % 12
+    dizhi_idx = dizhi_order.index(dizhi)
+    diff = (dizhi_idx - start_idx) % 12
+    
     return CHANGSHENG_ORDER[diff] if diff < len(CHANGSHENG_ORDER) else ''
 
 
@@ -96,8 +104,18 @@ def parse_tianjiang_position(tiandi_pan_with_jiang: str) -> dict:
     return result
 
 
+# 天干寄宫
+TIANGAN_JIGONG = {
+    '甲': '寅', '乙': '辰', '丙': '巳', '丁': '未', '戊': '巳',
+    '己': '未', '庚': '申', '辛': '戌', '壬': '亥', '癸': '丑'
+}
+
+
 def parse_sike_positions(sike_str: str, ri_gan: str, ri_zhi: str) -> dict:
-    """解析四课，返回每个位置的天将、地支、六亲"""
+    """解析四课，返回每个位置的天将、地支、六亲、长生
+    
+    六亲和长生自己算，不依赖字符串解析
+    """
     result = {}
     if not sike_str:
         return result
@@ -113,44 +131,42 @@ def parse_sike_positions(sike_str: str, ri_gan: str, ri_zhi: str) -> dict:
     for i, part in enumerate(parts):
         if i >= 4:
             break
-        # 去掉空亡/落空标记
         if part.startswith('○') or part.startswith('⊙'):
             part = part[1:]
         
-        # 匹配格式: [遁干]天将地支[:上]下神...
         match = re.match(r'^([甲乙丙丁戊己庚辛壬癸]?)([龙虎雀蛇贵阴后常玄勾合空])([子丑寅卯辰巳午未申酉戌亥])\[:上\](.+)$', part)
         if match:
             dungan, tianjiang_short, shangshen, rest = match.groups()
             tianjiang = TIANJIANG_FULL.get(tianjiang_short, tianjiang_short)
             
-            # 提取下神
             xia_match = re.match(r'^([子丑寅卯辰巳午未申酉戌亥甲乙丙丁戊己庚辛壬癸])', rest)
             if xia_match:
-                xia_shen = xia_match.group(1)
+                xia_shen_raw = xia_match.group(1)
                 ke_num = 4 - i
                 xia_name, shang_name = keti_names[i]
                 
-                # 下神实际值（第1课=日干，第3课=日支）
-                actual_xia = ri_gan if xia_name == "日干" else (ri_zhi if xia_name == "日支" else xia_shen)
+                # 下神可能是天干（第1课=日干），需要转成地支
+                if xia_shen_raw in TIANGAN_JIGONG:
+                    xia_shen_dizhi = TIANGAN_JIGONG[xia_shen_raw]
+                else:
+                    xia_shen_dizhi = xia_shen_raw
                 
                 # 上神位置
+                # 长生：上神地支在日干五行下的长生状态
                 result[f'第{ke_num}课上神'] = {
                     '地支': shangshen,
                     '天将': tianjiang,
-                    '六亲': calc_liuqin(ri_gan, shangshen) if ri_gan else ''
+                    '六亲': calc_liuqin(ri_gan, shangshen),
+                    '长生': get_changsheng_position(ri_gan, shangshen)
                 }
-                # 下神位置（只有第2课和第4课有独立下神）
-                if i in [0, 2]:  # 第4课和第2课
-                    result[f'第{ke_num}课下神'] = {
-                        '地支': xia_shen,
-                        '天将': '',  # 下神天将在括号里，暂不解析
-                        '六亲': calc_liuqin(ri_gan, xia_shen) if ri_gan else ''
-                    }
     return result
 
 
-def parse_sanchuan_positions(sanchuan_str: str, ri_gan: str) -> dict:
-    """解析三传，返回每个位置的天将、地支、六亲"""
+def parse_sanchuan_positions(sanchuan_str: str, ri_gan: str, ri_zhi: str) -> dict:
+    """解析三传，返回每个位置的天将、地支、六亲、长生
+    
+    六亲和长生自己算，不依赖字符串解析
+    """
     result = {}
     if not sanchuan_str:
         return result
@@ -165,19 +181,30 @@ def parse_sanchuan_positions(sanchuan_str: str, ri_gan: str) -> dict:
         if m:
             ld = m.group(1)
             dizhi = m.group(2)
-            tianjiang = m.group(3)
+            tianjiang_short = m.group(3)
             chuan_type = m.group(4)
             chuan_name = {'初': '初传', '中': '中传', '末': '末传'}[chuan_type]
+            
+            # 天将简称转全称
+            tianjiang = TIANJIANG_FULL.get(tianjiang_short, tianjiang_short)
+            
+            # 六亲和长生自己算
+            liuqin = calc_liuqin(ri_gan, dizhi)
+            changsheng = get_changsheng_position(ri_gan, dizhi)
+            
             result[chuan_name] = {
                 '地支': dizhi,
                 '天将': tianjiang,
-                '六亲': ld[0] if len(ld) >= 2 else ''
+                '六亲': liuqin,
+                '长生': changsheng
             }
     return result
 
 
 def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
     """从8008输出提取类象，按符号分类
+    
+    输入格式: {'total_matched': N, 'by_category': {...}}
     
     Returns:
         {
@@ -188,10 +215,10 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
         }
     """
     result = {}
-    if not leixiang_data or not leixiang_data.get('data', {}).get('by_category'):
+    if not leixiang_data or not leixiang_data.get('by_category'):
         return result
     
-    by_category = leixiang_data['data']['by_category']
+    by_category = leixiang_data['by_category']
     
     for cat_name, cat_data in by_category.items():
         items = cat_data.get('items', []) if isinstance(cat_data, dict) else cat_data
@@ -282,7 +309,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
     positions.update(sike_positions)
     
     # 三传
-    sanchuan_positions = parse_sanchuan_positions(ke_data.get('sanchuan', ''), ri_gan)
+    sanchuan_positions = parse_sanchuan_positions(ke_data.get('sanchuan', ''), ri_gan, ri_zhi)
     positions.update(sanchuan_positions)
     
     # 3. 从8008输出提取类象数据（按符号分类）
