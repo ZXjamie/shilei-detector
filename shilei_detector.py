@@ -498,7 +498,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
     return result
 
 
-def detect_all_shilei(ke_data: dict) -> dict:
+def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
     """一次计算所有17个事类的证数
     
     优化：只查1次Neo4j（获取所有事类规则），只解析1次六处位置
@@ -507,8 +507,7 @@ def detect_all_shilei(ke_data: dict) -> dict:
         {
             'success': True,
             'results': [
-                {'shilei': '财运', 'zhengshu': 9, 'max_zhengshu': 35},
-                {'shilei': '感情', 'zhengshu': 5, 'max_zhengshu': 35},
+                {'shilei': '财运', 'zhengshu': 9, 'max_zhengshu': 35, 'position_details': {...}},
                 ...
             ],
             'sorted': ['财运', '感情', ...]  # 按证数降序
@@ -543,6 +542,7 @@ def detect_all_shilei(ke_data: dict) -> dict:
         shilei_leixiang = rules['leixiang']
         shilei_shensha = rules['shensha']
         zhengshu = 0
+        position_details = {} if detail else None
         
         for pos_name in all_positions:
             pos_info = positions.get(pos_name, {})
@@ -554,47 +554,106 @@ def detect_all_shilei(ke_data: dict) -> dict:
             liuqin = pos_info.get('六亲', '')
             changsheng = pos_info.get('长生', '')
             
+            pos_zhengshu = 0
+            dim_details = {} if detail else None
+            
             # 地支维度
             if dizhi:
                 dz_key = f'DZ_{dizhi}'
                 dz_leixiang = leixiang_by_symbol.get(dz_key, set())
-                if dz_leixiang & shilei_leixiang:
-                    zhengshu += 1
+                intersection = dz_leixiang & shilei_leixiang
+                if intersection:
+                    pos_zhengshu += 1
+                    if detail:
+                        dim_details['地支'] = {
+                            'symbol': dizhi, 'matched': True,
+                            'intersection_count': len(intersection),
+                            'intersection_sample': list(intersection)[:3]
+                        }
+                elif detail:
+                    dim_details['地支'] = {'symbol': dizhi, 'matched': False}
             
             # 天将维度
             if tianjiang:
                 tj_key = f'TJ_{tianjiang}'
                 tj_leixiang = leixiang_by_symbol.get(tj_key, set())
-                if tj_leixiang & shilei_leixiang:
-                    zhengshu += 1
+                intersection = tj_leixiang & shilei_leixiang
+                if intersection:
+                    pos_zhengshu += 1
+                    if detail:
+                        dim_details['天将'] = {
+                            'symbol': tianjiang, 'matched': True,
+                            'intersection_count': len(intersection),
+                            'intersection_sample': list(intersection)[:3]
+                        }
+                elif detail:
+                    dim_details['天将'] = {'symbol': tianjiang, 'matched': False}
             
             # 六亲维度
             if liuqin:
                 lq_key = f'LQ_{liuqin}'
                 lq_leixiang = leixiang_by_symbol.get(lq_key, set())
-                if lq_leixiang & shilei_leixiang:
-                    zhengshu += 1
+                intersection = lq_leixiang & shilei_leixiang
+                if intersection:
+                    pos_zhengshu += 1
+                    if detail:
+                        dim_details['六亲'] = {
+                            'symbol': liuqin, 'matched': True,
+                            'intersection_count': len(intersection),
+                            'intersection_sample': list(intersection)[:3]
+                        }
+                elif detail:
+                    dim_details['六亲'] = {'symbol': liuqin, 'matched': False}
             
             # 长生维度
             if changsheng:
                 cs_key = f'CS_{changsheng}'
                 cs_leixiang = leixiang_by_symbol.get(cs_key, set())
-                if cs_leixiang & shilei_leixiang:
-                    zhengshu += 1
+                intersection = cs_leixiang & shilei_leixiang
+                if intersection:
+                    pos_zhengshu += 1
+                    if detail:
+                        dim_details['长生'] = {
+                            'symbol': changsheng, 'matched': True,
+                            'intersection_count': len(intersection),
+                            'intersection_sample': list(intersection)[:3]
+                        }
+                elif detail:
+                    dim_details['长生'] = {'symbol': changsheng, 'matched': False}
             
             # 神煞维度
             pos_shensha = set()
             if dizhi and dizhi in shensha_data:
                 shensha_list = shensha_data[dizhi]
                 pos_shensha = {s.get('name', '') for s in shensha_list if isinstance(s, dict)}
-            if pos_shensha & shilei_shensha:
-                zhengshu += 1
+            shensha_intersection = pos_shensha & shilei_shensha
+            if shensha_intersection:
+                pos_zhengshu += 1
+                if detail:
+                    dim_details['神煞'] = {
+                        'matched': True,
+                        'intersection_count': len(shensha_intersection),
+                        'intersection_sample': list(shensha_intersection)[:3]
+                    }
+            elif detail:
+                dim_details['神煞'] = {'matched': False}
+            
+            zhengshu += pos_zhengshu
+            
+            if detail and pos_zhengshu > 0:
+                position_details[pos_name] = {
+                    'zhengshu': pos_zhengshu,
+                    'dimensions': dim_details
+                }
         
-        results.append({
+        entry = {
             'shilei': shilei_name,
             'zhengshu': zhengshu,
-            'max_zhengshu': len(all_positions) * 5
-        })
+        }
+        if detail:
+            entry['position_details'] = position_details
+        
+        results.append(entry)
     
     # 按证数降序排序
     results.sort(key=lambda x: x['zhengshu'], reverse=True)

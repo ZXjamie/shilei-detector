@@ -53,7 +53,7 @@ class ShileiHandler(BaseHTTPRequestHandler):
 
             # 批量计算所有事类
             if shilei_name == 'all' or not shilei_name:
-                result = detect_all_shilei(ke_data)
+                result = detect_all_shilei(ke_data, detail)
                 self.send_json(result)
                 return
 
