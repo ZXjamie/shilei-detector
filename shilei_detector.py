@@ -547,7 +547,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
     ri_gan = day_str[0] if day_str and day_str[0] in '甲乙丙丁戊己庚辛壬癸' else None
     ri_zhi = day_str[1] if day_str and len(day_str) >= 2 and day_str[1] in '子丑寅卯辰巳午未申酉戌亥' else None
     
-    # 2. 解析六处位置
+    # 2. 解析位置（四课、三传、行年、本命）
     positions = {}
     
     # 四课
@@ -557,6 +557,32 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
     # 三传
     sanchuan_positions = parse_sanchuan_positions(ke_data.get('sanchuan', ''), ri_gan, ri_zhi)
     positions.update(sanchuan_positions)
+    
+    # 行年上神
+    xingnian_branch = ke_data.get('xingnian_branch')
+    tiandipan = ke_data.get('tiandipan', {})
+    tianjiang_position = ke_data.get('tianjiang_position', {})
+    if xingnian_branch and tiandipan:
+        xingnian_shangshen = tiandipan.get(xingnian_branch)
+        if xingnian_shangshen:
+            xingnian_tianjiang = tianjiang_position.get(xingnian_shangshen, '')
+            positions['行年上神'] = {
+                '地支': xingnian_shangshen,
+                '天将': xingnian_tianjiang,
+            }
+    
+    # 本命上神
+    benming = ke_data.get('benming')
+    if benming and len(benming) >= 2:
+        benming_dizhi = benming[1]  # 本命干支的地支部分
+        if tiandipan:
+            benming_shangshen = tiandipan.get(benming_dizhi)
+            if benming_shangshen:
+                benming_tianjiang = tianjiang_position.get(benming_shangshen, '')
+                positions['本命上神'] = {
+                    '地支': benming_shangshen,
+                    '天将': benming_tianjiang,
+                }
     
     # 3. 从8008输出提取类象数据（按符号分类）
     leixiang_by_symbol = extract_leixiang_from_8008(ke_data.get('leixiang', {}))
@@ -573,7 +599,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
     zhengshu = 0
     position_details = {}
     
-    all_positions = ['第1课上神', '第2课上神', '第3课上神', '第4课上神', '初传', '中传', '末传']
+    all_positions = ['第1课上神', '第2课上神', '第3课上神', '第4课上神', '初传', '中传', '末传', '行年上神', '本命上神']
     
     for pos_name in all_positions:
         pos_info = positions.get(pos_name, {})
@@ -728,12 +754,38 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
     ri_gan = day_str[0] if day_str and day_str[0] in '甲乙丙丁戊己庚辛壬癸' else None
     ri_zhi = day_str[1] if day_str and len(day_str) >= 2 and day_str[1] in '子丑寅卯辰巳午未申酉戌亥' else None
     
-    # 2. 解析六处位置（只做1次）
+    # 2. 解析位置（四课、三传、行年、本命）
     positions = {}
     sike_positions = parse_sike_positions(ke_data.get('sike', ''), ri_gan, ri_zhi)
     positions.update(sike_positions)
     sanchuan_positions = parse_sanchuan_positions(ke_data.get('sanchuan', ''), ri_gan, ri_zhi)
     positions.update(sanchuan_positions)
+    
+    # 行年上神
+    xingnian_branch = ke_data.get('xingnian_branch')
+    tiandipan = ke_data.get('tiandipan', {})
+    tianjiang_position = ke_data.get('tianjiang_position', {})
+    if xingnian_branch and tiandipan:
+        xingnian_shangshen = tiandipan.get(xingnian_branch)
+        if xingnian_shangshen:
+            xingnian_tianjiang = tianjiang_position.get(xingnian_shangshen, '')
+            positions['行年上神'] = {
+                '地支': xingnian_shangshen,
+                '天将': xingnian_tianjiang,
+            }
+    
+    # 本命上神
+    benming = ke_data.get('benming')
+    if benming and len(benming) >= 2:
+        benming_dizhi = benming[1]  # 本命干支的地支部分
+        if tiandipan:
+            benming_shangshen = tiandipan.get(benming_dizhi)
+            if benming_shangshen:
+                benming_tianjiang = tianjiang_position.get(benming_shangshen, '')
+                positions['本命上神'] = {
+                    '地支': benming_shangshen,
+                    '天将': benming_tianjiang,
+                }
     
     # 3. 从8008输出提取类象数据（只做1次）
     leixiang_by_symbol = extract_leixiang_from_8008(ke_data.get('leixiang', {}))
@@ -745,7 +797,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
     all_rules = fetch_all_shilei_rules()
     
     # 6. 对每个事类计算证数
-    all_positions = ['第1课上神', '第2课上神', '第3课上神', '第4课上神', '初传', '中传', '末传']
+    all_positions = ['第1课上神', '第2课上神', '第3课上神', '第4课上神', '初传', '中传', '末传', '行年上神', '本命上神']
     results = []
     
     for shilei_name, rules in all_rules.items():
@@ -921,12 +973,38 @@ def detect_all_for_weight(ke_data: dict) -> dict:
     ri_gan = day_str[0] if day_str and day_str[0] in '甲乙丙丁戊己庚辛壬癸' else None
     ri_zhi = day_str[1] if day_str and len(day_str) >= 2 and day_str[1] in '子丑寅卯辰巳午未申酉戌亥' else None
     
-    # 2. 解析七处位置
+    # 2. 解析位置（四课、三传、行年、本命）
     positions = {}
     sike_positions = parse_sike_positions(ke_data.get('sike', ''), ri_gan, ri_zhi)
     positions.update(sike_positions)
     sanchuan_positions = parse_sanchuan_positions(ke_data.get('sanchuan', ''), ri_gan, ri_zhi)
     positions.update(sanchuan_positions)
+    
+    # 行年上神
+    xingnian_branch = ke_data.get('xingnian_branch')
+    tiandipan = ke_data.get('tiandipan', {})
+    tianjiang_position = ke_data.get('tianjiang_position', {})
+    if xingnian_branch and tiandipan:
+        xingnian_shangshen = tiandipan.get(xingnian_branch)
+        if xingnian_shangshen:
+            xingnian_tianjiang = tianjiang_position.get(xingnian_shangshen, '')
+            positions['行年上神'] = {
+                '地支': xingnian_shangshen,
+                '天将': xingnian_tianjiang,
+            }
+    
+    # 本命上神
+    benming = ke_data.get('benming')
+    if benming and len(benming) >= 2:
+        benming_dizhi = benming[1]  # 本命干支的地支部分
+        if tiandipan:
+            benming_shangshen = tiandipan.get(benming_dizhi)
+            if benming_shangshen:
+                benming_tianjiang = tianjiang_position.get(benming_shangshen, '')
+                positions['本命上神'] = {
+                    '地支': benming_shangshen,
+                    '天将': benming_tianjiang,
+                }
     
     # 3. 从8008输出提取类象数据（按符号分类）
     leixiang_by_symbol = extract_leixiang_from_8008(ke_data.get('leixiang', {}))
@@ -938,7 +1016,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
     all_rules = fetch_all_shilei_rules()
     
     # 6. 对每个事类，计算加权分数（含明细）
-    all_positions = ['第1课上神', '第2课上神', '第3课上神', '第4课上神', '初传', '中传', '末传']
+    all_positions = ['第1课上神', '第2课上神', '第3课上神', '第4课上神', '初传', '中传', '末传', '行年上神', '本命上神']
     shilei_results = {}
     
     for shilei_name, rules in all_rules.items():
