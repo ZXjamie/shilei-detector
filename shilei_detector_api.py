@@ -14,7 +14,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # 确保能导入同目录模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from shilei_detector import detect_shilei, detect_all_shilei, detect_all_for_weight
+from shilei_detector import detect_shilei, detect_all_shilei, detect_all_for_weight, load_weight_config
 
 PORT = 8014
 
@@ -31,6 +31,13 @@ class ShileiHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/health':
             self.send_json({'status': 'ok', 'port': PORT})
+        elif self.path == '/reload':
+            # 重新加载权重配置
+            try:
+                load_weight_config()
+                self.send_json({'success': True, 'message': '权重配置已重新加载'})
+            except Exception as e:
+                self.send_json({'success': False, 'error': str(e)}, 500)
         else:
             self.send_error(404)
 

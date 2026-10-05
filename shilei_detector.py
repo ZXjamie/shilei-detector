@@ -1,16 +1,137 @@
 """
 事类检测器核心逻辑
 输入：起课引擎全量数据 + 事类名称
-输出：证数报告
+输出：加权分数报告
 """
 import re
 import sys
+from itertools import combinations
 from neo4j import GraphDatabase
 
 # Neo4j 连接
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USER = "neo4j"
 NEO4J_PASSWORD = "password123"
+
+# ─── 权重配置缓存 ─────────────────────────────────────────────
+# 维度权重（从 Neo4j 加载）
+WEIGHT_CONFIG = {
+    '天将': 2.0,
+    '地支': 2.0,
+    '六亲': 3.0,
+    '长生': 1.5,
+    '神煞': 1.0
+}
+
+# 2维组合比例（从 Neo4j 加载）
+# key: frozenset(['维度1', '维度2']), value: 比例
+COMBINATION_RATIO = {}
+
+
+def load_weight_config():
+    """从 Neo4j 加载权重配置到内存"""
+    global WEIGHT_CONFIG, COMBINATION_RATIO
+    
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    
+    with driver.session() as session:
+        # 加载维度权重
+        result = session.run("""
+            MATCH (w:权重配置 {类型: '维度'})
+            RETURN w.name AS name, w.权重 AS weight
+        """)
+        for record in result:
+            name = record['name']
+            weight = record['weight']
+            if name and weight is not None:
+                WEIGHT_CONFIG[name] = float(weight)
+        
+        # 加载2维组合比例
+        result = session.run("""
+            MATCH (c:组合比例)
+            RETURN c.组合 AS combo, c.比例 AS ratio
+        """)
+        for record in result:
+            combo = record['combo']
+            ratio = record['ratio']
+            if combo and ratio is not None:
+                # combo 是列表，如 ['天将', '地支']
+                if isinstance(combo, list) and len(combo) == 2:
+                    COMBINATION_RATIO[frozenset(combo)] = float(ratio)
+    
+    driver.close()
+    print(f"[权重配置] 已加载: 维度权重={WEIGHT_CONFIG}, 2维组合={len(COMBINATION_RATIO)}个")
+
+
+def get_combination_ratio(dims: set) -> float:
+    """获取多维组合的比例
+    
+    2维：直接查表
+    3维及以上：涉及的所有2维组合比例的平均值
+    """
+    dims_list = list(dims)
+    if len(dims_list) < 2:
+        return 0.0
+    
+    if len(dims_list) == 2:
+        return COMBINATION_RATIO.get(frozenset(dims_list), 0.0)
+    
+    # 3维及以上：计算所有2维子组合的比例平均值
+    ratios = []
+    for combo in combinations(dims_list, 2):
+        ratio = COMBINATION_RATIO.get(frozenset(combo), 0.0)
+        ratios.append(ratio)
+    
+    return sum(ratios) / len(ratios) if ratios else 0.0
+
+
+def calculate_weighted_score(dim_matches: dict) -> dict:
+    """计算单个位置的加权分数
+    
+    Args:
+        dim_matches: 各维度匹配数
+            {'天将': 2, '地支': 0, '六亲': 1, '长生': 0, '神煞': 3}
+    
+    Returns:
+        {
+            'score': 15.5,  # 总分
+            'base_score': 8.0,  # 维度基础分
+            'combo_score': 7.5,  # 组合加分
+            'matched_dims': ['天将', '六亲', '神煞']  # 命中的维度
+        }
+    """
+    # 1. 计算维度基础分（维度内累加，不封顶）
+    base_scores = {}
+    for dim_name, match_count in dim_matches.items():
+        if match_count > 0:
+            weight = WEIGHT_CONFIG.get(dim_name, 1.0)
+            base_scores[dim_name] = match_count * weight
+    
+    base_score = sum(base_scores.values())
+    matched_dims = list(base_scores.keys())
+    
+    # 2. 计算多维组合加分
+    combo_score = 0.0
+    if len(matched_dims) >= 2:
+        # 获取组合比例
+        ratio = get_combination_ratio(set(matched_dims))
+        if ratio > 0:
+            # 组合加分 = 涉及的维度基础分之和 × 组合比例
+            combo_base_sum = sum(base_scores.values())
+            combo_score = combo_base_sum * ratio
+    
+    total_score = base_score + combo_score
+    
+    return {
+        'score': round(total_score, 2),
+        'base_score': round(base_score, 2),
+        'combo_score': round(combo_score, 2),
+        'matched_dims': matched_dims
+    }
+
+
+# 启动时加载权重配置
+load_weight_config()
 
 # 天干五行（用于六亲计算）
 TIANGAN_WUXING = {
@@ -208,11 +329,15 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
     
     Returns:
         {
-            'DZ_子': ['荡妇', '桃花', ...],  # 地支子触发的类象meaning
-            'TJ_贵人': ['官禄', '文书', ...],  # 天将贵人触发的类象meaning
-            'LQ_妻财': ['钱财', '妻子', ...],  # 六亲妻财触发的类象meaning
-            'CS_长生': ['父亲', '学校', ...],  # 长生状态触发的类象meaning
+            'DZ_子': ['荡妇', '桃花', ...],  # 地支子触发的类象name
+            'TJ_贵人': ['领导', '东北', ...],  # 天将贵人触发的类象name
+            'LQ_妻财': ['钱财', '妻子', ...],  # 六亲妻财触发的类象name
+            'CS_长生': ['父亲', '学校', ...],  # 长生状态触发的类象name
         }
+    
+    提取逻辑：
+    - 优先从 combination_key 提取 lx_xxx（天将/地支有值）
+    - 没有则用 meaning（六亲/长生的 combination_key 为空）
     """
     result = {}
     if not leixiang_data or not leixiang_data.get('by_category'):
@@ -223,13 +348,29 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
     for cat_name, cat_data in by_category.items():
         items = cat_data.get('items', []) if isinstance(cat_data, dict) else cat_data
         for item in items:
-            item_id = item.get('id', '')  # 如 DZ_子
-            meaning = item.get('meaning', '')  # 如 "荡妇"
+            item_id = item.get('id', '')  # 如 DZ_子、TJ_贵人
+            if not item_id:
+                continue
             
-            if item_id and meaning:
+            # 优先从 combination_key 提取 lx_xxx
+            combo_key = item.get('combination_key', '')
+            leixiang_name = None
+            
+            if combo_key:
+                parts = combo_key.split('|')
+                for part in parts:
+                    if part.startswith('lx_'):
+                        leixiang_name = part[3:]  # 去掉 'lx_' 前缀
+                        break
+            
+            # 没有 combination_key 或没有 lx_ 前缀，则用 meaning
+            if not leixiang_name:
+                leixiang_name = item.get('meaning', '')
+            
+            if leixiang_name:
                 if item_id not in result:
                     result[item_id] = set()
-                result[item_id].add(meaning)
+                result[item_id].add(leixiang_name)
     
     return result
 
@@ -667,27 +808,38 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
 
 
 def detect_all_for_weight(ke_data: dict) -> dict:
-    """输出权重计算器所需的原始匹配数据
+    """直接输出加权分数（含调试明细）
     
-    不做证数计算，只输出每个位置每个维度与每个事类的交集。
-    权重计算器拿到后自行计算分数。
+    算法：
+    1. 每个位置每个维度计算匹配类象数量
+    2. 维度基础分 = 匹配数 × 维度权重（维度内累加，不封顶）
+    3. 多维组合加分 = 维度基础分之和 × 组合比例
+    4. 位置分数 = 基础分 + 组合加分
+    5. 事类总分 = 所有位置分数之和
     
     Returns:
         {
             'success': True,
             'shilei_results': {
                 '财运': {
-                    '第1课上神': {
-                        '地支': {'symbol': '申', 'matched_leixiang': ['钱财', ...]},
-                        '天将': {'symbol': '青龙', 'matched_leixiang': [...]},
-                        '六亲': {'symbol': '妻财', 'matched_leixiang': [...]},
-                        '长生': {'symbol': '帝旺', 'matched_leixiang': [...]},
-                        '神煞': {'matched_shensha': ['财神', ...]}
-                    },
-                    ...
+                    'total_score': 25.5,
+                    'positions': {
+                        '第1课上神': {
+                            'score': 8.0, 'base': 4.0, 'combo': 4.0,
+                            'dims': {
+                                '地支': {'symbol': '寅', 'matched': ['钱财', '金银'], 'score': 4.0},
+                                '天将': {'symbol': '青龙', 'matched': ['财帛'], 'score': 2.0},
+                                '六亲': {'symbol': '妻财', 'matched': [], 'score': 0},
+                                '长生': {'symbol': '帝旺', 'matched': [], 'score': 0},
+                                '神煞': {'matched': ['天财', '地财'], 'score': 1.0}
+                            }
+                        },
+                        ...
+                    }
                 },
                 ...
-            }
+            },
+            'sorted': ['财运', '感情', ...]  # 按总分降序
         }
     """
     # 1. 提取日干日支
@@ -711,14 +863,15 @@ def detect_all_for_weight(ke_data: dict) -> dict:
     # 5. 一次查询所有事类规则
     all_rules = fetch_all_shilei_rules()
     
-    # 6. 对每个事类，计算每个位置每个维度的交集
+    # 6. 对每个事类，计算加权分数（含明细）
     all_positions = ['第1课上神', '第2课上神', '第3课上神', '第4课上神', '初传', '中传', '末传']
     shilei_results = {}
     
     for shilei_name, rules in all_rules.items():
         shilei_leixiang = rules['leixiang']
         shilei_shensha = rules['shensha']
-        pos_data = {}
+        total_score = 0.0
+        pos_scores = {}
         
         for pos_name in all_positions:
             pos_info = positions.get(pos_name, {})
@@ -730,47 +883,53 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             liuqin = pos_info.get('六亲', '')
             changsheng = pos_info.get('长生', '')
             
-            dim_data = {}
+            # 计算每个维度的匹配明细
+            dim_details = {}
+            dim_matches = {}  # 用于计算分数
             
             # 地支维度
             if dizhi:
                 dz_key = f'DZ_{dizhi}'
                 dz_leixiang = leixiang_by_symbol.get(dz_key, set())
                 intersection = dz_leixiang & shilei_leixiang
-                dim_data['地支'] = {
+                dim_details['地支'] = {
                     'symbol': dizhi,
-                    'matched_leixiang': list(intersection)
+                    'matched': list(intersection)
                 }
+                dim_matches['地支'] = len(intersection)
             
             # 天将维度
             if tianjiang:
                 tj_key = f'TJ_{tianjiang}'
                 tj_leixiang = leixiang_by_symbol.get(tj_key, set())
                 intersection = tj_leixiang & shilei_leixiang
-                dim_data['天将'] = {
+                dim_details['天将'] = {
                     'symbol': tianjiang,
-                    'matched_leixiang': list(intersection)
+                    'matched': list(intersection)
                 }
+                dim_matches['天将'] = len(intersection)
             
             # 六亲维度
             if liuqin:
                 lq_key = f'LQ_{liuqin}'
                 lq_leixiang = leixiang_by_symbol.get(lq_key, set())
                 intersection = lq_leixiang & shilei_leixiang
-                dim_data['六亲'] = {
+                dim_details['六亲'] = {
                     'symbol': liuqin,
-                    'matched_leixiang': list(intersection)
+                    'matched': list(intersection)
                 }
+                dim_matches['六亲'] = len(intersection)
             
             # 长生维度
             if changsheng:
                 cs_key = f'CS_{changsheng}'
                 cs_leixiang = leixiang_by_symbol.get(cs_key, set())
                 intersection = cs_leixiang & shilei_leixiang
-                dim_data['长生'] = {
+                dim_details['长生'] = {
                     'symbol': changsheng,
-                    'matched_leixiang': list(intersection)
+                    'matched': list(intersection)
                 }
+                dim_matches['长生'] = len(intersection)
             
             # 神煞维度
             pos_shensha = set()
@@ -778,16 +937,42 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 shensha_list = shensha_data[dizhi]
                 pos_shensha = {s.get('name', '') for s in shensha_list if isinstance(s, dict)}
             shensha_intersection = pos_shensha & shilei_shensha
-            dim_data['神煞'] = {
-                'matched_shensha': list(shensha_intersection)
+            dim_details['神煞'] = {
+                'matched': list(shensha_intersection)
             }
+            dim_matches['神煞'] = len(shensha_intersection)
             
-            pos_data[pos_name] = dim_data
+            # 计算加权分数
+            score_info = calculate_weighted_score(dim_matches)
+            
+            # 为每个维度添加得分
+            for dim_name in dim_details:
+                weight = WEIGHT_CONFIG.get(dim_name, 1.0)
+                match_count = dim_matches.get(dim_name, 0)
+                dim_details[dim_name]['score'] = round(match_count * weight, 2)
+            
+            if score_info['score'] > 0:
+                pos_scores[pos_name] = {
+                    'score': score_info['score'],
+                    'base': score_info['base_score'],
+                    'combo': score_info['combo_score'],
+                    'dims': dim_details
+                }
+                total_score += score_info['score']
         
-        shilei_results[shilei_name] = pos_data
+        if total_score > 0:
+            shilei_results[shilei_name] = {
+                'total_score': round(total_score, 2),
+                'positions': pos_scores
+            }
+    
+    # 按总分降序排序
+    sorted_items = sorted(shilei_results.items(), key=lambda x: x[1]['total_score'], reverse=True)
+    sorted_names = [name for name, _ in sorted_items]
     
     return {
         'success': True,
-        'shilei_results': shilei_results
+        'shilei_results': shilei_results,
+        'sorted': sorted_names
     }
 
