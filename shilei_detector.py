@@ -664,3 +664,130 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
         'results': results,
         'sorted': sorted_names
     }
+
+
+def detect_all_for_weight(ke_data: dict) -> dict:
+    """输出权重计算器所需的原始匹配数据
+    
+    不做证数计算，只输出每个位置每个维度与每个事类的交集。
+    权重计算器拿到后自行计算分数。
+    
+    Returns:
+        {
+            'success': True,
+            'shilei_results': {
+                '财运': {
+                    '第1课上神': {
+                        '地支': {'symbol': '申', 'matched_leixiang': ['钱财', ...]},
+                        '天将': {'symbol': '青龙', 'matched_leixiang': [...]},
+                        '六亲': {'symbol': '妻财', 'matched_leixiang': [...]},
+                        '长生': {'symbol': '帝旺', 'matched_leixiang': [...]},
+                        '神煞': {'matched_shensha': ['财神', ...]}
+                    },
+                    ...
+                },
+                ...
+            }
+        }
+    """
+    # 1. 提取日干日支
+    day_str = ke_data.get('day', '')
+    ri_gan = day_str[0] if day_str and day_str[0] in '甲乙丙丁戊己庚辛壬癸' else None
+    ri_zhi = day_str[1] if day_str and len(day_str) >= 2 and day_str[1] in '子丑寅卯辰巳午未申酉戌亥' else None
+    
+    # 2. 解析七处位置
+    positions = {}
+    sike_positions = parse_sike_positions(ke_data.get('sike', ''), ri_gan, ri_zhi)
+    positions.update(sike_positions)
+    sanchuan_positions = parse_sanchuan_positions(ke_data.get('sanchuan', ''), ri_gan, ri_zhi)
+    positions.update(sanchuan_positions)
+    
+    # 3. 从8008输出提取类象数据（按符号分类）
+    leixiang_by_symbol = extract_leixiang_from_8008(ke_data.get('leixiang', {}))
+    
+    # 4. 提取神煞
+    shensha_data = ke_data.get('shensha', {})
+    
+    # 5. 一次查询所有事类规则
+    all_rules = fetch_all_shilei_rules()
+    
+    # 6. 对每个事类，计算每个位置每个维度的交集
+    all_positions = ['第1课上神', '第2课上神', '第3课上神', '第4课上神', '初传', '中传', '末传']
+    shilei_results = {}
+    
+    for shilei_name, rules in all_rules.items():
+        shilei_leixiang = rules['leixiang']
+        shilei_shensha = rules['shensha']
+        pos_data = {}
+        
+        for pos_name in all_positions:
+            pos_info = positions.get(pos_name, {})
+            if not pos_info:
+                continue
+            
+            dizhi = pos_info.get('地支', '')
+            tianjiang = pos_info.get('天将', '')
+            liuqin = pos_info.get('六亲', '')
+            changsheng = pos_info.get('长生', '')
+            
+            dim_data = {}
+            
+            # 地支维度
+            if dizhi:
+                dz_key = f'DZ_{dizhi}'
+                dz_leixiang = leixiang_by_symbol.get(dz_key, set())
+                intersection = dz_leixiang & shilei_leixiang
+                dim_data['地支'] = {
+                    'symbol': dizhi,
+                    'matched_leixiang': list(intersection)
+                }
+            
+            # 天将维度
+            if tianjiang:
+                tj_key = f'TJ_{tianjiang}'
+                tj_leixiang = leixiang_by_symbol.get(tj_key, set())
+                intersection = tj_leixiang & shilei_leixiang
+                dim_data['天将'] = {
+                    'symbol': tianjiang,
+                    'matched_leixiang': list(intersection)
+                }
+            
+            # 六亲维度
+            if liuqin:
+                lq_key = f'LQ_{liuqin}'
+                lq_leixiang = leixiang_by_symbol.get(lq_key, set())
+                intersection = lq_leixiang & shilei_leixiang
+                dim_data['六亲'] = {
+                    'symbol': liuqin,
+                    'matched_leixiang': list(intersection)
+                }
+            
+            # 长生维度
+            if changsheng:
+                cs_key = f'CS_{changsheng}'
+                cs_leixiang = leixiang_by_symbol.get(cs_key, set())
+                intersection = cs_leixiang & shilei_leixiang
+                dim_data['长生'] = {
+                    'symbol': changsheng,
+                    'matched_leixiang': list(intersection)
+                }
+            
+            # 神煞维度
+            pos_shensha = set()
+            if dizhi and dizhi in shensha_data:
+                shensha_list = shensha_data[dizhi]
+                pos_shensha = {s.get('name', '') for s in shensha_list if isinstance(s, dict)}
+            shensha_intersection = pos_shensha & shilei_shensha
+            dim_data['神煞'] = {
+                'matched_shensha': list(shensha_intersection)
+            }
+            
+            pos_data[pos_name] = dim_data
+        
+        shilei_results[shilei_name] = pos_data
+    
+    return {
+        'success': True,
+        'shilei_results': shilei_results
+    }
+

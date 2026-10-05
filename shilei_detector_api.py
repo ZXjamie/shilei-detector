@@ -14,7 +14,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # 确保能导入同目录模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from shilei_detector import detect_shilei, detect_all_shilei
+from shilei_detector import detect_shilei, detect_all_shilei, detect_all_for_weight
 
 PORT = 8014
 
@@ -23,6 +23,8 @@ class ShileiHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == '/detect':
             self.handle_detect()
+        elif self.path == '/detect_for_weight':
+            self.handle_detect_for_weight()
         else:
             self.send_error(404)
 
@@ -66,6 +68,21 @@ class ShileiHandler(BaseHTTPRequestHandler):
                 'success': False,
                 'error': str(e)
             }, 500)
+
+    def handle_detect_for_weight(self):
+        """输出权重计算器所需的原始匹配数据"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body)
+            ke_data = data.get('ke_data', {})
+            if not ke_data:
+                self.send_json({'success': False, 'error': '缺少 ke_data 参数'}, 400)
+                return
+            result = detect_all_for_weight(ke_data)
+            self.send_json(result)
+        except Exception as e:
+            self.send_json({'success': False, 'error': str(e)}, 500)
 
     def send_json(self, data, status=200):
         self.send_response(status)
