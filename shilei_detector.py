@@ -15,13 +15,7 @@ NEO4J_PASSWORD = "password123"
 
 # ─── 权重配置缓存 ─────────────────────────────────────────────
 # 维度权重（从 Neo4j 加载）
-WEIGHT_CONFIG = {
-    '天将': 2.0,
-    '地支': 2.0,
-    '六亲': 3.0,
-    '长生': 1.5,
-    '神煞': 1.0
-}
+WEIGHT_CONFIG = {}
 
 # 2维组合比例（从 Neo4j 加载）
 # key: frozenset(['维度1', '维度2']), value: 比例
@@ -38,7 +32,7 @@ def load_weight_config():
         # 加载维度权重
         result = session.run("""
             MATCH (w:权重配置 {类型: '维度'})
-            RETURN w.name AS name, w.权重 AS weight
+            RETURN w.名称 AS name, w.权重 AS weight
         """)
         for record in result:
             name = record['name']
@@ -332,7 +326,8 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
             '初传': {
                 'DZ_子': {'鬼神': 2, '桃花': 1, ...},
                 'TJ_贵人': {'领导': 1, ...},
-                'LQ_兄弟': {'债务': 1, ...},
+                'LQ_兄弟': {'债务': 1, ...},      # 地支六亲
+                'LQ_DUN_兄弟': {'债务': 1, ...},  # 遁干六亲
                 ...
             },
             '中传': {...},
@@ -348,6 +343,10 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
     - 5段 → 二维 → 计数2
     - 6段 → 三维 → 计数3
     - 7段 → 四维 → 计数4
+    
+    六亲区分：
+    - trigger包含"遁干" → LQ_DUN_xxx（遁干六亲）
+    - 否则 → LQ_xxx（地支六亲）
     
     去重规则：
     - 同一位置内，同一符号+类象组合只计数1次
@@ -365,17 +364,26 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
             if not item_id:
                 continue
             
-            # 提取位置信息（从trigger字段，如"中传(寅)为兄弟"）
+            # 提取位置信息（从trigger字段，如"中传(寅)为兄弟"或"中传(遁干甲)为兄弟"）
             trigger = item.get('trigger', '')
             pos_name = ''
+            is_dungan = False  # 是否是遁干六亲
             if trigger:
                 # 提取位置名：中传(寅)为兄弟 → 中传
                 match = re.match(r'^([^(\\s]+)', trigger)
                 if match:
                     pos_name = match.group(1)
+                # 检查是否是遁干六亲
+                if '遁干' in trigger:
+                    is_dungan = True
             
             if not pos_name:
                 continue
+            
+            # 天将/地支/天干类象不含位置语义（trigger为"X乘地支在课传"等）
+            # 归入全局桶，由消费方按各位置的天将/地支去查
+            if item_id.startswith(('TJ_', 'DZ_', 'TG_')):
+                pos_name = '__global__'
             
             # 初始化位置
             if pos_name not in result:
@@ -403,6 +411,13 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
             
             if leixiang_name:
                 pos_data = result[pos_name]
+                
+                # 六亲需要区分地支六亲和遁干六亲
+                if item_id.startswith('LQ_'):
+                    if is_dungan:
+                        # 遁干六亲：LQ_兄弟 → LQ_DUN_兄弟
+                        item_id = 'LQ_DUN_' + item_id[3:]
+                
                 if item_id not in pos_data:
                     pos_data[item_id] = {}
                 # 同一位置内，同一类象只计数1次（不累加）
@@ -410,6 +425,17 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
                     pos_data[item_id][leixiang_name] = weight
     
     return result
+
+
+def get_pos_leixiang(leixiang_by_symbol: dict, pos_name: str) -> dict:
+    """取某位置的类象，合并全局桶
+    
+    天将/地支/天干类象无位置语义，存在 __global__ 桶中；
+    六亲/长生类象按位置存放。本函数把两者合并，供维度计算使用。
+    """
+    merged = dict(leixiang_by_symbol.get('__global__', {}))
+    merged.update(leixiang_by_symbol.get(pos_name, {}))
+    return merged
 
 
 def extract_shensha_by_position(shensha_data: dict, positions: dict) -> dict:
@@ -562,7 +588,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         
         # [从8008读取] 六亲和长生由8008计算，从leixiang_by_symbol中提取
         # 查找该位置下以LQ_开头的六亲key
-        pos_leixiang = leixiang_by_symbol.get(pos_name, {})
+        pos_leixiang = get_pos_leixiang(leixiang_by_symbol, pos_name)
         liuqin_keys = [k for k in pos_leixiang.keys() if k.startswith('LQ_')]
         changsheng_keys = [k for k in pos_leixiang.keys() if k.startswith('CS_')]
         
@@ -737,7 +763,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             tianjiang = pos_info.get('天将', '')
             
             # [从8008读取] 六亲和长生由8008计算，从leixiang_by_symbol中提取
-            pos_leixiang = leixiang_by_symbol.get(pos_name, {})
+            pos_leixiang = get_pos_leixiang(leixiang_by_symbol, pos_name)
             liuqin_keys = [k for k in pos_leixiang.keys() if k.startswith('LQ_')]
             changsheng_keys = [k for k in pos_leixiang.keys() if k.startswith('CS_')]
             
@@ -930,8 +956,9 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             tianjiang = pos_info.get('天将', '')
             
             # [从8008读取] 六亲和长生由8008计算，从leixiang_by_symbol中提取
-            pos_leixiang = leixiang_by_symbol.get(pos_name, {})
-            liuqin_keys = [k for k in pos_leixiang.keys() if k.startswith('LQ_')]
+            pos_leixiang = get_pos_leixiang(leixiang_by_symbol, pos_name)
+            liuqin_dz_keys = [k for k in pos_leixiang.keys() if k.startswith('LQ_') and not k.startswith('LQ_DUN_')]
+            liuqin_dun_keys = [k for k in pos_leixiang.keys() if k.startswith('LQ_DUN_')]
             changsheng_keys = [k for k in pos_leixiang.keys() if k.startswith('CS_')]
             
             # 计算每个维度的匹配明细
@@ -944,11 +971,13 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 dz_leixiang = pos_leixiang.get(dz_key, {})
                 # 找出匹配的类象及其权重
                 matched_items = []
-                total_weight = 0
                 for lx_name, weight in dz_leixiang.items():
                     if lx_name in shilei_leixiang:
                         matched_items.append((lx_name, weight))
-                        total_weight += weight
+                # 一维类象只贡献1次，多维类象正常累加
+                has_1d = any(w == 1 for _, w in matched_items)
+                multi_dim_sum = sum(w for _, w in matched_items if w > 1)
+                total_weight = (1 if has_1d else 0) + multi_dim_sum
                 # 格式化输出
                 matched_str = []
                 for lx_name, weight in matched_items:
@@ -967,11 +996,13 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 tj_key = f'TJ_{tianjiang}'
                 tj_leixiang = pos_leixiang.get(tj_key, {})
                 matched_items = []
-                total_weight = 0
                 for lx_name, weight in tj_leixiang.items():
                     if lx_name in shilei_leixiang:
                         matched_items.append((lx_name, weight))
-                        total_weight += weight
+                # 一维类象只贡献1次，多维类象正常累加
+                has_1d = any(w == 1 for _, w in matched_items)
+                multi_dim_sum = sum(w for _, w in matched_items if w > 1)
+                total_weight = (1 if has_1d else 0) + multi_dim_sum
                 matched_str = []
                 for lx_name, weight in matched_items:
                     if weight > 1:
@@ -984,15 +1015,17 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 }
                 dim_matches['天将'] = total_weight
             
-            # 六亲维度（从8008读取）
-            for lq_key in liuqin_keys:
+            # 地支六亲维度（从8008读取）
+            for lq_key in liuqin_dz_keys:
                 lq_leixiang = pos_leixiang.get(lq_key, {})
                 matched_items = []
-                total_weight = 0
                 for lx_name, weight in lq_leixiang.items():
                     if lx_name in shilei_leixiang:
                         matched_items.append((lx_name, weight))
-                        total_weight += weight
+                # 一维类象只贡献1次，多维类象正常累加
+                has_1d = any(w == 1 for _, w in matched_items)
+                multi_dim_sum = sum(w for _, w in matched_items if w > 1)
+                total_weight = (1 if has_1d else 0) + multi_dim_sum
                 matched_str = []
                 for lx_name, weight in matched_items:
                     if weight > 1:
@@ -1000,21 +1033,47 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     else:
                         matched_str.append(lx_name)
                 liuqin_name = lq_key[3:]  # 去掉LQ_前缀
-                dim_details['六亲'] = {
+                dim_details['地支六亲'] = {
                     'symbol': liuqin_name,
                     'matched': matched_str
                 }
-                dim_matches['六亲'] = total_weight
+                dim_matches['地支六亲'] = total_weight
+            
+            # 遁干六亲维度（从8008读取）
+            for lq_key in liuqin_dun_keys:
+                lq_leixiang = pos_leixiang.get(lq_key, {})
+                matched_items = []
+                for lx_name, weight in lq_leixiang.items():
+                    if lx_name in shilei_leixiang:
+                        matched_items.append((lx_name, weight))
+                # 一维类象只贡献1次，多维类象正常累加
+                has_1d = any(w == 1 for _, w in matched_items)
+                multi_dim_sum = sum(w for _, w in matched_items if w > 1)
+                total_weight = (1 if has_1d else 0) + multi_dim_sum
+                matched_str = []
+                for lx_name, weight in matched_items:
+                    if weight > 1:
+                        matched_str.append(f"{lx_name}×{weight}")
+                    else:
+                        matched_str.append(lx_name)
+                liuqin_name = lq_key[7:]  # 去掉LQ_DUN_前缀
+                dim_details['遁干六亲'] = {
+                    'symbol': liuqin_name,
+                    'matched': matched_str
+                }
+                dim_matches['遁干六亲'] = total_weight
             
             # 长生维度（从8008读取）
             for cs_key in changsheng_keys:
                 cs_leixiang = pos_leixiang.get(cs_key, {})
                 matched_items = []
-                total_weight = 0
                 for lx_name, weight in cs_leixiang.items():
                     if lx_name in shilei_leixiang:
                         matched_items.append((lx_name, weight))
-                        total_weight += weight
+                # 一维类象只贡献1次，多维类象正常累加
+                has_1d = any(w == 1 for _, w in matched_items)
+                multi_dim_sum = sum(w for _, w in matched_items if w > 1)
+                total_weight = (1 if has_1d else 0) + multi_dim_sum
                 matched_str = []
                 for lx_name, weight in matched_items:
                     if weight > 1:
