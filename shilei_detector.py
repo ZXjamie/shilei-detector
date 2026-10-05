@@ -160,54 +160,56 @@ TIANJIANG_FULL = {
 CHANGSHENG_ORDER = ['长生', '沐浴', '冠带', '临官', '帝旺', '衰', '病', '死', '墓', '绝', '胎', '养']
 
 
-def calc_liuqin(ri_gan: str, dizhi: str) -> str:
-    """计算地支相对于日干的六亲"""
-    if not ri_gan or not dizhi:
-        return ''
-    wo = TIANGAN_WUXING.get(ri_gan, '')
-    ta = DIZHI_WUXING.get(dizhi, '')
-    if not wo or not ta:
-        return ''
-    if wo == ta:
-        return '兄弟'
-    elif WUXING_SHENG.get(wo) == ta:
-        return '子孙'
-    elif WUXING_KE.get(wo) == ta:
-        return '妻财'
-    elif WUXING_SHENG.get(ta) == wo:
-        return '父母'
-    elif WUXING_KE.get(ta) == wo:
-        return '官鬼'
-    return ''
+# [已禁用] 六亲和长生由类象检测器(8008)计算，8014只消费不重算
+# def calc_liuqin(ri_gan: str, dizhi: str) -> str:
+#     """计算地支相对于日干的六亲"""
+#     if not ri_gan or not dizhi:
+#         return ''
+#     wo = TIANGAN_WUXING.get(ri_gan, '')
+#     ta = DIZHI_WUXING.get(dizhi, '')
+#     if not wo or not ta:
+#         return ''
+#     if wo == ta:
+#         return '兄弟'
+#     elif WUXING_SHENG.get(wo) == ta:
+#         return '子孙'
+#     elif WUXING_KE.get(wo) == ta:
+#         return '妻财'
+#     elif WUXING_SHENG.get(ta) == wo:
+#         return '父母'
+#     elif WUXING_KE.get(ta) == wo:
+#         return '官鬼'
+#     return ''
 
 
-def get_changsheng_position(ri_gan: str, dizhi: str) -> str:
-    """计算地支相对于日干的十二长生状态
-    
-    用天干五行计算，不用寄宫
-    甲乙木长生在亥，丙丁火长生在寅，戊己土长生在寅，庚辛金长生在巳，壬癸水长生在申
-    """
-    if not ri_gan or not dizhi:
-        return ''
-    
-    # 天干五行
-    wuxing = TIANGAN_WUXING.get(ri_gan, '')
-    if not wuxing:
-        return ''
-    
-    # 五行长生起始地支
-    changsheng_start = {'木': '亥', '火': '寅', '土': '寅', '金': '巳', '水': '申'}
-    start = changsheng_start.get(wuxing, '')
-    if not start:
-        return ''
-    
-    # 计算位置差
-    dizhi_order = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥']
-    start_idx = dizhi_order.index(start)
-    dizhi_idx = dizhi_order.index(dizhi)
-    diff = (dizhi_idx - start_idx) % 12
-    
-    return CHANGSHENG_ORDER[diff] if diff < len(CHANGSHENG_ORDER) else ''
+# [已禁用] 六亲和长生由类象检测器(8008)计算，8014只消费不重算
+# def get_changsheng_position(ri_gan: str, dizhi: str) -> str:
+#     """计算地支相对于日干的十二长生状态
+#     
+#     用天干五行计算，不用寄宫
+#     甲乙木长生在亥，丙丁火长生在寅，戊己土长生在寅，庚辛金长生在巳，壬癸水长生在申
+#     """
+#     if not ri_gan or not dizhi:
+#         return ''
+#     
+#     # 天干五行
+#     wuxing = TIANGAN_WUXING.get(ri_gan, '')
+#     if not wuxing:
+#         return ''
+#     
+#     # 五行长生起始地支
+#     changsheng_start = {'木': '亥', '火': '寅', '土': '寅', '金': '巳', '水': '申'}
+#     start = changsheng_start.get(wuxing, '')
+#     if not start:
+#         return ''
+#     
+#     # 计算位置差
+#     dizhi_order = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥']
+#     start_idx = dizhi_order.index(start)
+#     dizhi_idx = dizhi_order.index(dizhi)
+#     diff = (dizhi_idx - start_idx) % 12
+#     
+#     return CHANGSHENG_ORDER[diff] if diff < len(CHANGSHENG_ORDER) else ''
 
 
 def parse_tianjiang_position(tiandi_pan_with_jiang: str) -> dict:
@@ -273,12 +275,10 @@ def parse_sike_positions(sike_str: str, ri_gan: str, ri_zhi: str) -> dict:
                     xia_shen_dizhi = xia_shen_raw
                 
                 # 上神位置
-                # 长生：上神地支在日干五行下的长生状态
+                # [已禁用] 六亲和长生由8008计算，从leixiang_by_symbol中读取LQ_和CS_前缀
                 result[f'第{ke_num}课上神'] = {
                     '地支': shangshen,
                     '天将': tianjiang,
-                    '六亲': calc_liuqin(ri_gan, shangshen),
-                    '长生': get_changsheng_position(ri_gan, shangshen)
                 }
     return result
 
@@ -309,41 +309,48 @@ def parse_sanchuan_positions(sanchuan_str: str, ri_gan: str, ri_zhi: str) -> dic
             # 天将简称转全称
             tianjiang = TIANJIANG_FULL.get(tianjiang_short, tianjiang_short)
             
-            # 六亲和长生自己算
-            liuqin = calc_liuqin(ri_gan, dizhi)
-            changsheng = get_changsheng_position(ri_gan, dizhi)
+            # [已禁用] 六亲和长生由8008计算，这里不再自己算
+            # liuqin = calc_liuqin(ri_gan, dizhi)
+            # changsheng = get_changsheng_position(ri_gan, dizhi)
             
             result[chuan_name] = {
                 '地支': dizhi,
                 '天将': tianjiang,
-                '六亲': liuqin,
-                '长生': changsheng
+                # '六亲': liuqin,
+                # '长生': changsheng
             }
     return result
 
 
 def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
-    """从8008输出提取类象，按符号分类，支持多维倍增
+    """从8008输出提取类象，按位置和符号分类，支持多维倍增
     
     输入格式: {'total_matched': N, 'by_category': {...}}
     
     Returns:
         {
-            'DZ_子': {'鬼神': 2, '桃花': 1, ...},  # 地支子触发的类象及计数
-            'TJ_贵人': {'领导': 1, '东北': 2, ...},  # 天将贵人触发的类象及计数
-            'LQ_妻财': {'钱财': 1, '妻子': 1, ...},  # 六亲妻财触发的类象及计数
-            'CS_长生': {'父亲': 1, '学校': 1, ...},  # 长生状态触发的类象及计数
+            '初传': {
+                'DZ_子': {'鬼神': 2, '桃花': 1, ...},
+                'TJ_贵人': {'领导': 1, ...},
+                'LQ_兄弟': {'债务': 1, ...},
+                ...
+            },
+            '中传': {...},
+            ...
         }
     
     提取逻辑：
-    - 优先从 combination_key 提取 lx_xxx（天将/地支有值）
-    - 没有则用 meaning（六亲/长生的 combination_key 为空）
+    - 优先从 combination_key 提取 lx_xxx
+    - 没有则用 meaning
     
     维度判断（基于combination_key段数）：
     - 4段 → 一维 → 计数1
     - 5段 → 二维 → 计数2
     - 6段 → 三维 → 计数3
     - 7段 → 四维 → 计数4
+    
+    去重规则：
+    - 同一位置内，同一符号+类象组合只计数1次
     """
     result = {}
     if not leixiang_data or not leixiang_data.get('by_category'):
@@ -354,9 +361,25 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
     for cat_name, cat_data in by_category.items():
         items = cat_data.get('items', []) if isinstance(cat_data, dict) else cat_data
         for item in items:
-            item_id = item.get('id', '')  # 如 DZ_子、TJ_贵人
+            item_id = item.get('id', '')  # 如 DZ_子、TJ_贵人、LQ_兄弟
             if not item_id:
                 continue
+            
+            # 提取位置信息（从trigger字段，如"中传(寅)为兄弟"）
+            trigger = item.get('trigger', '')
+            pos_name = ''
+            if trigger:
+                # 提取位置名：中传(寅)为兄弟 → 中传
+                match = re.match(r'^([^(\\s]+)', trigger)
+                if match:
+                    pos_name = match.group(1)
+            
+            if not pos_name:
+                continue
+            
+            # 初始化位置
+            if pos_name not in result:
+                result[pos_name] = {}
             
             # 优先从 combination_key 提取 lx_xxx
             combo_key = item.get('combination_key', '')
@@ -371,7 +394,6 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
                         leixiang_name = part[3:]  # 去掉 'lx_' 前缀
                         break
                 # 判断维度：根据段数判断
-                # 4段=一维(1), 5段=二维(2), 6段=三维(3), 7段=四维(4)
                 num_parts = len(parts)
                 if num_parts >= 4:
                     weight = num_parts - 3  # 4段→1, 5段→2, 6段→3, 7段→4
@@ -380,10 +402,12 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
                 leixiang_name = item.get('meaning', '')
             
             if leixiang_name:
-                if item_id not in result:
-                    result[item_id] = {}
-                # 累加计数
-                result[item_id][leixiang_name] = result[item_id].get(leixiang_name, 0) + weight
+                pos_data = result[pos_name]
+                if item_id not in pos_data:
+                    pos_data[item_id] = {}
+                # 同一位置内，同一类象只计数1次（不累加）
+                if leixiang_name not in pos_data[item_id]:
+                    pos_data[item_id][leixiang_name] = weight
     
     return result
 
@@ -535,13 +559,17 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         
         dizhi = pos_info.get('地支', '')
         tianjiang = pos_info.get('天将', '')
-        liuqin = pos_info.get('六亲', '')
-        changsheng = pos_info.get('长生', '')
+        
+        # [从8008读取] 六亲和长生由8008计算，从leixiang_by_symbol中提取
+        # 查找该位置下以LQ_开头的六亲key
+        pos_leixiang = leixiang_by_symbol.get(pos_name, {})
+        liuqin_keys = [k for k in pos_leixiang.keys() if k.startswith('LQ_')]
+        changsheng_keys = [k for k in pos_leixiang.keys() if k.startswith('CS_')]
         
         # 地支维度
         if dizhi:
             dz_key = f'DZ_{dizhi}'
-            dz_leixiang = leixiang_by_symbol.get(dz_key, {})
+            dz_leixiang = pos_leixiang.get(dz_key, {})
             matched_items = {k: v for k, v in dz_leixiang.items() if k in shilei_leixiang}
             if matched_items:
                 pos_zhengshu += 1
@@ -559,7 +587,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         # 天将维度
         if tianjiang:
             tj_key = f'TJ_{tianjiang}'
-            tj_leixiang = leixiang_by_symbol.get(tj_key, {})
+            tj_leixiang = pos_leixiang.get(tj_key, {})
             matched_items = {k: v for k, v in tj_leixiang.items() if k in shilei_leixiang}
             if matched_items:
                 pos_zhengshu += 1
@@ -574,41 +602,43 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
                 if detail:
                     dim_details['天将'] = {'symbol': tianjiang, 'matched': False}
         
-        # 六亲维度
-        if liuqin:
-            lq_key = f'LQ_{liuqin}'
-            lq_leixiang = leixiang_by_symbol.get(lq_key, {})
+        # 六亲维度（从8008读取）
+        for lq_key in liuqin_keys:
+            lq_leixiang = pos_leixiang.get(lq_key, {})
             matched_items = {k: v for k, v in lq_leixiang.items() if k in shilei_leixiang}
             if matched_items:
                 pos_zhengshu += 1
                 if detail:
+                    liuqin_name = lq_key[3:]  # 去掉LQ_前缀
                     dim_details['六亲'] = {
-                        'symbol': liuqin,
+                        'symbol': liuqin_name,
                         'matched': True,
                         'intersection_count': sum(matched_items.values()),
                         'intersection_sample': [f"{k}×{v}" if v > 1 else k for k, v in list(matched_items.items())[:3]]
                     }
             else:
-                if detail:
-                    dim_details['六亲'] = {'symbol': liuqin, 'matched': False}
+                if detail and '六亲' not in dim_details:
+                    liuqin_name = lq_key[3:]
+                    dim_details['六亲'] = {'symbol': liuqin_name, 'matched': False}
         
-        # 长生维度
-        if changsheng:
-            cs_key = f'CS_{changsheng}'
-            cs_leixiang = leixiang_by_symbol.get(cs_key, {})
+        # 长生维度（从8008读取）
+        for cs_key in changsheng_keys:
+            cs_leixiang = pos_leixiang.get(cs_key, {})
             matched_items = {k: v for k, v in cs_leixiang.items() if k in shilei_leixiang}
             if matched_items:
                 pos_zhengshu += 1
                 if detail:
+                    changsheng_name = cs_key[3:]  # 去掉CS_前缀
                     dim_details['长生'] = {
-                        'symbol': changsheng,
+                        'symbol': changsheng_name,
                         'matched': True,
                         'intersection_count': sum(matched_items.values()),
                         'intersection_sample': [f"{k}×{v}" if v > 1 else k for k, v in list(matched_items.items())[:3]]
                     }
             else:
-                if detail:
-                    dim_details['长生'] = {'symbol': changsheng, 'matched': False}
+                if detail and '长生' not in dim_details:
+                    changsheng_name = cs_key[3:]
+                    dim_details['长生'] = {'symbol': changsheng_name, 'matched': False}
         
         # 神煞维度
         pos_shensha = set()
@@ -705,8 +735,11 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             
             dizhi = pos_info.get('地支', '')
             tianjiang = pos_info.get('天将', '')
-            liuqin = pos_info.get('六亲', '')
-            changsheng = pos_info.get('长生', '')
+            
+            # [从8008读取] 六亲和长生由8008计算，从leixiang_by_symbol中提取
+            pos_leixiang = leixiang_by_symbol.get(pos_name, {})
+            liuqin_keys = [k for k in pos_leixiang.keys() if k.startswith('LQ_')]
+            changsheng_keys = [k for k in pos_leixiang.keys() if k.startswith('CS_')]
             
             pos_zhengshu = 0
             dim_details = {} if detail else None
@@ -714,7 +747,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             # 地支维度
             if dizhi:
                 dz_key = f'DZ_{dizhi}'
-                dz_leixiang = leixiang_by_symbol.get(dz_key, {})
+                dz_leixiang = pos_leixiang.get(dz_key, {})
                 matched_items = {k: v for k, v in dz_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
@@ -730,7 +763,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             # 天将维度
             if tianjiang:
                 tj_key = f'TJ_{tianjiang}'
-                tj_leixiang = leixiang_by_symbol.get(tj_key, {})
+                tj_leixiang = pos_leixiang.get(tj_key, {})
                 matched_items = {k: v for k, v in tj_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
@@ -743,37 +776,39 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
                 elif detail:
                     dim_details['天将'] = {'symbol': tianjiang, 'matched': False}
             
-            # 六亲维度
-            if liuqin:
-                lq_key = f'LQ_{liuqin}'
-                lq_leixiang = leixiang_by_symbol.get(lq_key, {})
+            # 六亲维度（从8008读取）
+            for lq_key in liuqin_keys:
+                lq_leixiang = pos_leixiang.get(lq_key, {})
                 matched_items = {k: v for k, v in lq_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
                     if detail:
+                        liuqin_name = lq_key[3:]
                         dim_details['六亲'] = {
-                            'symbol': liuqin, 'matched': True,
+                            'symbol': liuqin_name, 'matched': True,
                             'intersection_count': sum(matched_items.values()),
                             'intersection_sample': [f"{k}×{v}" if v > 1 else k for k, v in list(matched_items.items())[:3]]
                         }
-                elif detail:
-                    dim_details['六亲'] = {'symbol': liuqin, 'matched': False}
+                elif detail and dim_details is not None and '六亲' not in dim_details:
+                    liuqin_name = lq_key[3:]
+                    dim_details['六亲'] = {'symbol': liuqin_name, 'matched': False}
             
-            # 长生维度
-            if changsheng:
-                cs_key = f'CS_{changsheng}'
-                cs_leixiang = leixiang_by_symbol.get(cs_key, {})
+            # 长生维度（从8008读取）
+            for cs_key in changsheng_keys:
+                cs_leixiang = pos_leixiang.get(cs_key, {})
                 matched_items = {k: v for k, v in cs_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
                     if detail:
+                        changsheng_name = cs_key[3:]
                         dim_details['长生'] = {
-                            'symbol': changsheng, 'matched': True,
+                            'symbol': changsheng_name, 'matched': True,
                             'intersection_count': sum(matched_items.values()),
                             'intersection_sample': [f"{k}×{v}" if v > 1 else k for k, v in list(matched_items.items())[:3]]
                         }
-                elif detail:
-                    dim_details['长生'] = {'symbol': changsheng, 'matched': False}
+                elif detail and dim_details is not None and '长生' not in dim_details:
+                    changsheng_name = cs_key[3:]
+                    dim_details['长生'] = {'symbol': changsheng_name, 'matched': False}
             
             # 神煞维度
             pos_shensha = set()
@@ -893,8 +928,11 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             
             dizhi = pos_info.get('地支', '')
             tianjiang = pos_info.get('天将', '')
-            liuqin = pos_info.get('六亲', '')
-            changsheng = pos_info.get('长生', '')
+            
+            # [从8008读取] 六亲和长生由8008计算，从leixiang_by_symbol中提取
+            pos_leixiang = leixiang_by_symbol.get(pos_name, {})
+            liuqin_keys = [k for k in pos_leixiang.keys() if k.startswith('LQ_')]
+            changsheng_keys = [k for k in pos_leixiang.keys() if k.startswith('CS_')]
             
             # 计算每个维度的匹配明细
             dim_details = {}
@@ -903,7 +941,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             # 地支维度
             if dizhi:
                 dz_key = f'DZ_{dizhi}'
-                dz_leixiang = leixiang_by_symbol.get(dz_key, {})
+                dz_leixiang = pos_leixiang.get(dz_key, {})
                 # 找出匹配的类象及其权重
                 matched_items = []
                 total_weight = 0
@@ -927,7 +965,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             # 天将维度
             if tianjiang:
                 tj_key = f'TJ_{tianjiang}'
-                tj_leixiang = leixiang_by_symbol.get(tj_key, {})
+                tj_leixiang = pos_leixiang.get(tj_key, {})
                 matched_items = []
                 total_weight = 0
                 for lx_name, weight in tj_leixiang.items():
@@ -946,10 +984,9 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 }
                 dim_matches['天将'] = total_weight
             
-            # 六亲维度
-            if liuqin:
-                lq_key = f'LQ_{liuqin}'
-                lq_leixiang = leixiang_by_symbol.get(lq_key, {})
+            # 六亲维度（从8008读取）
+            for lq_key in liuqin_keys:
+                lq_leixiang = pos_leixiang.get(lq_key, {})
                 matched_items = []
                 total_weight = 0
                 for lx_name, weight in lq_leixiang.items():
@@ -962,16 +999,16 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                         matched_str.append(f"{lx_name}×{weight}")
                     else:
                         matched_str.append(lx_name)
+                liuqin_name = lq_key[3:]  # 去掉LQ_前缀
                 dim_details['六亲'] = {
-                    'symbol': liuqin,
+                    'symbol': liuqin_name,
                     'matched': matched_str
                 }
                 dim_matches['六亲'] = total_weight
             
-            # 长生维度
-            if changsheng:
-                cs_key = f'CS_{changsheng}'
-                cs_leixiang = leixiang_by_symbol.get(cs_key, {})
+            # 长生维度（从8008读取）
+            for cs_key in changsheng_keys:
+                cs_leixiang = pos_leixiang.get(cs_key, {})
                 matched_items = []
                 total_weight = 0
                 for lx_name, weight in cs_leixiang.items():
@@ -984,8 +1021,9 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                         matched_str.append(f"{lx_name}×{weight}")
                     else:
                         matched_str.append(lx_name)
+                changsheng_name = cs_key[3:]  # 去掉CS_前缀
                 dim_details['长生'] = {
-                    'symbol': changsheng,
+                    'symbol': changsheng_name,
                     'matched': matched_str
                 }
                 dim_matches['长生'] = total_weight
