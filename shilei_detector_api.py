@@ -14,7 +14,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # 确保能导入同目录模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from shilei_detector import detect_shilei
+from shilei_detector import detect_shilei, detect_all_shilei
 
 PORT = 8014
 
@@ -51,16 +51,14 @@ class ShileiHandler(BaseHTTPRequestHandler):
                 }, 400)
                 return
 
-            if not shilei_name:
-                self.send_json({
-                    'success': False,
-                    'error': '缺少 shilei 参数'
-                }, 400)
+            # 批量计算所有事类
+            if shilei_name == 'all' or not shilei_name:
+                result = detect_all_shilei(ke_data)
+                self.send_json(result)
                 return
 
-            # 执行检测
+            # 单事类检测
             result = detect_shilei(ke_data, shilei_name, detail)
-
             self.send_json(result)
 
         except Exception as e:

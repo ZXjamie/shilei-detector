@@ -278,6 +278,48 @@ def fetch_shilei_rules(shilei_name: str) -> dict:
     }
 
 
+def fetch_all_shilei_rules() -> dict:
+    """一次查询获取所有事类的规则
+    
+    Returns:
+        {
+            '财运': {'leixiang': set(...), 'shensha': set(...)},
+            '感情': {'leixiang': set(...), 'shensha': set(...)},
+            ...
+        }
+    """
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    
+    result = {}
+    with driver.session() as session:
+        # 一次查询所有事类及其关联的类象
+        leixiang_result = session.run("""
+            MATCH (s:事类)-[:关联类象]->(l:Leixiang)
+            RETURN s.name AS shilei_name, l.name AS leixiang_name
+        """)
+        for record in leixiang_result:
+            shilei_name = record['shilei_name']
+            leixiang_name = record['leixiang_name']
+            if shilei_name not in result:
+                result[shilei_name] = {'leixiang': set(), 'shensha': set()}
+            result[shilei_name]['leixiang'].add(leixiang_name)
+        
+        # 一次查询所有事类及其关联的神煞
+        shensha_result = session.run("""
+            MATCH (s:事类)-[:关联神煞]->(ss:Shensha)
+            RETURN s.name AS shilei_name, ss.name AS shensha_name
+        """)
+        for record in shensha_result:
+            shilei_name = record['shilei_name']
+            shensha_name = record['shensha_name']
+            if shilei_name not in result:
+                result[shilei_name] = {'leixiang': set(), 'shensha': set()}
+            result[shilei_name]['shensha'].add(shensha_name)
+    
+    driver.close()
+    return result
+
+
 def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict:
     """
     事类检测主函数
@@ -454,3 +496,112 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         result['position_details'] = position_details
     
     return result
+
+
+def detect_all_shilei(ke_data: dict) -> dict:
+    """一次计算所有17个事类的证数
+    
+    优化：只查1次Neo4j（获取所有事类规则），只解析1次六处位置
+    
+    Returns:
+        {
+            'success': True,
+            'results': [
+                {'shilei': '财运', 'zhengshu': 9, 'max_zhengshu': 35},
+                {'shilei': '感情', 'zhengshu': 5, 'max_zhengshu': 35},
+                ...
+            ],
+            'sorted': ['财运', '感情', ...]  # 按证数降序
+        }
+    """
+    # 1. 提取日干日支
+    day_str = ke_data.get('day', '')
+    ri_gan = day_str[0] if day_str and day_str[0] in '甲乙丙丁戊己庚辛壬癸' else None
+    ri_zhi = day_str[1] if day_str and len(day_str) >= 2 and day_str[1] in '子丑寅卯辰巳午未申酉戌亥' else None
+    
+    # 2. 解析六处位置（只做1次）
+    positions = {}
+    sike_positions = parse_sike_positions(ke_data.get('sike', ''), ri_gan, ri_zhi)
+    positions.update(sike_positions)
+    sanchuan_positions = parse_sanchuan_positions(ke_data.get('sanchuan', ''), ri_gan, ri_zhi)
+    positions.update(sanchuan_positions)
+    
+    # 3. 从8008输出提取类象数据（只做1次）
+    leixiang_by_symbol = extract_leixiang_from_8008(ke_data.get('leixiang', {}))
+    
+    # 4. 提取神煞（只做1次）
+    shensha_data = ke_data.get('shensha', {})
+    
+    # 5. 一次查询所有事类规则（只查1次Neo4j）
+    all_rules = fetch_all_shilei_rules()
+    
+    # 6. 对每个事类计算证数
+    all_positions = ['第1课上神', '第2课上神', '第3课上神', '第4课上神', '初传', '中传', '末传']
+    results = []
+    
+    for shilei_name, rules in all_rules.items():
+        shilei_leixiang = rules['leixiang']
+        shilei_shensha = rules['shensha']
+        zhengshu = 0
+        
+        for pos_name in all_positions:
+            pos_info = positions.get(pos_name, {})
+            if not pos_info:
+                continue
+            
+            dizhi = pos_info.get('地支', '')
+            tianjiang = pos_info.get('天将', '')
+            liuqin = pos_info.get('六亲', '')
+            changsheng = pos_info.get('长生', '')
+            
+            # 地支维度
+            if dizhi:
+                dz_key = f'DZ_{dizhi}'
+                dz_leixiang = leixiang_by_symbol.get(dz_key, set())
+                if dz_leixiang & shilei_leixiang:
+                    zhengshu += 1
+            
+            # 天将维度
+            if tianjiang:
+                tj_key = f'TJ_{tianjiang}'
+                tj_leixiang = leixiang_by_symbol.get(tj_key, set())
+                if tj_leixiang & shilei_leixiang:
+                    zhengshu += 1
+            
+            # 六亲维度
+            if liuqin:
+                lq_key = f'LQ_{liuqin}'
+                lq_leixiang = leixiang_by_symbol.get(lq_key, set())
+                if lq_leixiang & shilei_leixiang:
+                    zhengshu += 1
+            
+            # 长生维度
+            if changsheng:
+                cs_key = f'CS_{changsheng}'
+                cs_leixiang = leixiang_by_symbol.get(cs_key, set())
+                if cs_leixiang & shilei_leixiang:
+                    zhengshu += 1
+            
+            # 神煞维度
+            pos_shensha = set()
+            if dizhi and dizhi in shensha_data:
+                shensha_list = shensha_data[dizhi]
+                pos_shensha = {s.get('name', '') for s in shensha_list if isinstance(s, dict)}
+            if pos_shensha & shilei_shensha:
+                zhengshu += 1
+        
+        results.append({
+            'shilei': shilei_name,
+            'zhengshu': zhengshu,
+            'max_zhengshu': len(all_positions) * 5
+        })
+    
+    # 按证数降序排序
+    results.sort(key=lambda x: x['zhengshu'], reverse=True)
+    sorted_names = [r['shilei'] for r in results]
+    
+    return {
+        'success': True,
+        'results': results,
+        'sorted': sorted_names
+    }
