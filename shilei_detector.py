@@ -21,6 +21,11 @@ WEIGHT_CONFIG = {}
 # key: frozenset(['维度1', '维度2']), value: 比例
 COMBINATION_RATIO = {}
 
+# 事类专属2维组合比例（从 Neo4j 加载）
+# key: 事类名, value: {frozenset(['维度1', '维度2']): 比例}
+# 查询时优先用事类专属，没有则 fallback 到全局 COMBINATION_RATIO
+COMBINATION_RATIO_BY_SHILEI = {}
+
 # 神煞聚集系数（从 Neo4j 加载）
 # key: 事类名, value: 系数（0表示无聚集效应）
 JUJI_CONFIG = {}
@@ -28,7 +33,7 @@ JUJI_CONFIG = {}
 
 def load_weight_config():
     """从 Neo4j 加载权重配置到内存"""
-    global WEIGHT_CONFIG, COMBINATION_RATIO, JUJI_CONFIG
+    global WEIGHT_CONFIG, COMBINATION_RATIO, COMBINATION_RATIO_BY_SHILEI, JUJI_CONFIG
     
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     
@@ -44,18 +49,25 @@ def load_weight_config():
             if name and weight is not None:
                 WEIGHT_CONFIG[name] = float(weight)
         
-        # 加载2维组合比例
+        # 加载2维组合比例（区分全局和事类专属）
         result = session.run("""
             MATCH (c:组合比例)
-            RETURN c.组合 AS combo, c.比例 AS ratio
+            RETURN c.事类 AS shilei, c.组合 AS combo, c.比例 AS ratio
         """)
         for record in result:
+            shilei = record.get('shilei')  # None表示全局
             combo = record['combo']
             ratio = record['ratio']
             if combo and ratio is not None:
-                # combo 是列表，如 ['天将', '地支']
                 if isinstance(combo, list) and len(combo) == 2:
-                    COMBINATION_RATIO[frozenset(combo)] = float(ratio)
+                    if shilei:
+                        # 事类专属组合比例
+                        if shilei not in COMBINATION_RATIO_BY_SHILEI:
+                            COMBINATION_RATIO_BY_SHILEI[shilei] = {}
+                        COMBINATION_RATIO_BY_SHILEI[shilei][frozenset(combo)] = float(ratio)
+                    else:
+                        # 全局组合比例
+                        COMBINATION_RATIO[frozenset(combo)] = float(ratio)
         
         # 加载神煞聚集系数
         result = session.run("""
@@ -72,34 +84,41 @@ def load_weight_config():
     print(f"[权重配置] 已加载: 维度权重={WEIGHT_CONFIG}, 2维组合={len(COMBINATION_RATIO)}个, 聚集系数={JUJI_CONFIG}")
 
 
-def get_combination_ratio(dims: set) -> float:
+def get_combination_ratio(dims: set, shilei_name: str = None) -> float:
     """获取多维组合的比例
     
-    2维：直接查表
-    3维及以上：涉及的所有2维组合比例的平均值
+    2维：直接查表（优先事类专属，fallback到全局）
+    3维及以上：涉及的所有2维组合比例的求和（优先事类专属，fallback到全局）
     """
     dims_list = list(dims)
     if len(dims_list) < 2:
         return 0.0
     
+    # 获取事类专属或全局的组合比例表
+    shilei_ratios = COMBINATION_RATIO_BY_SHILEI.get(shilei_name, {}) if shilei_name else {}
+    
+    def _get_ratio(combo_key):
+        """优先查事类专属，fallback到全局"""
+        return shilei_ratios.get(combo_key, COMBINATION_RATIO.get(combo_key, 0.0))
+    
     if len(dims_list) == 2:
-        return COMBINATION_RATIO.get(frozenset(dims_list), 0.0)
+        return _get_ratio(frozenset(dims_list))
     
-    # 3维及以上：计算所有2维子组合的比例平均值
-    ratios = []
+    # 3维及以上：计算所有2维子组合的比例求和
+    total_ratio = 0.0
     for combo in combinations(dims_list, 2):
-        ratio = COMBINATION_RATIO.get(frozenset(combo), 0.0)
-        ratios.append(ratio)
+        total_ratio += _get_ratio(frozenset(combo))
     
-    return sum(ratios) / len(ratios) if ratios else 0.0
+    return total_ratio
 
 
-def calculate_weighted_score(dim_matches: dict) -> dict:
+def calculate_weighted_score(dim_matches: dict, shilei_name: str = None) -> dict:
     """计算单个位置的加权分数
     
     Args:
         dim_matches: 各维度匹配数
             {'天将': 2, '地支': 0, '六亲': 1, '长生': 0, '神煞': 3}
+        shilei_name: 事类名称（可选），用于查询事类专属组合比例
     
     Returns:
         {
@@ -1260,7 +1279,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             dim_matches['神煞'] = shensha_weighted_score
             
             # 计算加权分数
-            score_info = calculate_weighted_score(dim_matches)
+            score_info = calculate_weighted_score(dim_matches, shilei_name=shilei_name)
             
             # 为每个维度添加得分
             for dim_name in dim_details:
