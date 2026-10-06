@@ -142,7 +142,7 @@ def calculate_weighted_score(dim_matches: dict, shilei_name: str = None) -> dict
     combo_score = 0.0
     if len(matched_dims) >= 2:
         # 获取组合比例
-        ratio = get_combination_ratio(set(matched_dims))
+        ratio = get_combination_ratio(set(matched_dims), shilei_name)
         if ratio > 0:
             # 组合加分 = 涉及的维度基础分之和 × 组合比例
             combo_base_sum = sum(base_scores.values())
