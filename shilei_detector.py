@@ -21,10 +21,14 @@ WEIGHT_CONFIG = {}
 # key: frozenset(['维度1', '维度2']), value: 比例
 COMBINATION_RATIO = {}
 
+# 神煞聚集系数（从 Neo4j 加载）
+# key: 事类名, value: 系数（0表示无聚集效应）
+JUJI_CONFIG = {}
+
 
 def load_weight_config():
     """从 Neo4j 加载权重配置到内存"""
-    global WEIGHT_CONFIG, COMBINATION_RATIO
+    global WEIGHT_CONFIG, COMBINATION_RATIO, JUJI_CONFIG
     
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     
@@ -52,9 +56,20 @@ def load_weight_config():
                 # combo 是列表，如 ['天将', '地支']
                 if isinstance(combo, list) and len(combo) == 2:
                     COMBINATION_RATIO[frozenset(combo)] = float(ratio)
+        
+        # 加载神煞聚集系数
+        result = session.run("""
+            MATCH (j:聚集系数)
+            RETURN j.事类 AS shilei, j.系数 AS ratio
+        """)
+        for record in result:
+            shilei = record['shilei']
+            ratio = record['ratio']
+            if shilei and ratio is not None:
+                JUJI_CONFIG[shilei] = float(ratio)
     
     driver.close()
-    print(f"[权重配置] 已加载: 维度权重={WEIGHT_CONFIG}, 2维组合={len(COMBINATION_RATIO)}个")
+    print(f"[权重配置] 已加载: 维度权重={WEIGHT_CONFIG}, 2维组合={len(COMBINATION_RATIO)}个, 聚集系数={JUJI_CONFIG}")
 
 
 def get_combination_ratio(dims: set) -> float:
@@ -503,18 +518,25 @@ def fetch_all_shilei_rules() -> dict:
     
     result = {}
     with driver.session() as session:
-        # 一次查询所有事类及其关联的类象（含权重）
+        # 一次查询所有事类及其关联的类象（含权重，含天将专属权重）
         leixiang_result = session.run("""
             MATCH (s:事类)-[r:关联类象]->(l:Leixiang)
-            RETURN s.name AS shilei_name, l.name AS leixiang_name, r.权重 AS weight
+            RETURN s.name AS shilei_name, l.name AS leixiang_name, r.权重 AS weight, r.天将 AS tianjiang
         """)
         for record in leixiang_result:
             shilei_name = record['shilei_name']
             leixiang_name = record['leixiang_name']
             weight = record['weight'] if record['weight'] is not None else 1.0
+            tianjiang = record['tianjiang']  # 可能为 None
             if shilei_name not in result:
-                result[shilei_name] = {'leixiang': {}, 'shensha': {}}
-            result[shilei_name]['leixiang'][leixiang_name] = weight
+                result[shilei_name] = {'leixiang': {}, 'leixiang_tj': {}, 'shensha': {}}
+            if tianjiang:
+                # 天将专属权重：{类象名: {天将: weight}}
+                if leixiang_name not in result[shilei_name]['leixiang_tj']:
+                    result[shilei_name]['leixiang_tj'][leixiang_name] = {}
+                result[shilei_name]['leixiang_tj'][leixiang_name][tianjiang] = weight
+            else:
+                result[shilei_name]['leixiang'][leixiang_name] = weight
         
         # 一次查询所有事类及其关联的神煞（含权重）
         shensha_result = session.run("""
@@ -526,7 +548,7 @@ def fetch_all_shilei_rules() -> dict:
             shensha_name = record['shensha_name']
             weight = record['weight'] if record['weight'] is not None else 1.0
             if shilei_name not in result:
-                result[shilei_name] = {'leixiang': {}, 'shensha': {}}
+                result[shilei_name] = {'leixiang': {}, 'leixiang_tj': {}, 'shensha': {}}
             result[shilei_name]['shensha'][shensha_name] = weight
     
     driver.close()
@@ -1030,6 +1052,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
     
     for shilei_name, rules in all_rules.items():
         shilei_leixiang = rules['leixiang']
+        shilei_leixiang_tj = rules.get('leixiang_tj', {})  # 天将专属权重
         shilei_shensha = rules['shensha']
         total_score = 0.0
         pos_scores = {}
@@ -1093,9 +1116,14 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 tj_leixiang = pos_leixiang.get(tj_key, {})
                 matched_items = []
                 for lx_name, weight in tj_leixiang.items():
-                    if lx_name in shilei_leixiang:
+                    # 优先查天将专属权重
+                    if lx_name in shilei_leixiang_tj and tianjiang in shilei_leixiang_tj[lx_name]:
+                        shilei_weight = shilei_leixiang_tj[lx_name][tianjiang]
+                    elif lx_name in shilei_leixiang:
                         shilei_weight = shilei_leixiang[lx_name]
-                        matched_items.append((lx_name, weight, shilei_weight))
+                    else:
+                        continue  # 两个都没有，不匹配
+                    matched_items.append((lx_name, weight, shilei_weight))
                 one_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w == 1]
                 multi_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w > 1]
                 total_weight = 0.0
@@ -1218,6 +1246,14 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 pos_shensha = {s.get('name', '') for s in shensha_list if isinstance(s, dict)}
             shensha_intersection = {name for name in pos_shensha if name in shilei_shensha}
             shensha_weighted_score = sum(shilei_shensha[name] for name in shensha_intersection)
+            
+            # 应用神煞聚集效应：同一位置命中多个神煞时额外加分
+            # 公式：基础分 × (1 + (命中数-1) × 聚集系数)
+            juji_ratio = JUJI_CONFIG.get(shilei_name, 0.0)
+            if len(shensha_intersection) > 1 and juji_ratio > 0:
+                juji_multiplier = 1 + (len(shensha_intersection) - 1) * juji_ratio
+                shensha_weighted_score *= juji_multiplier
+            
             dim_details['神煞'] = {
                 'matched': [f"{name}×{shilei_shensha[name]}" if shilei_shensha[name] != 1 else name for name in shensha_intersection]
             }
