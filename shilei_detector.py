@@ -456,39 +456,46 @@ def extract_shensha_by_position(shensha_data: dict, positions: dict) -> dict:
 
 
 def fetch_shilei_rules(shilei_name: str) -> dict:
-    """从Neo4j查询事类关联的类象和神煞"""
+    """从Neo4j查询事类关联的类象和神煞（含权重）
+    
+    Returns:
+        {
+            'leixiang': {'类象名1': 权重1, '类象名2': 权重2, ...},
+            'shensha': {'神煞名1': 权重1, '神煞名2': 权重2, ...}
+        }
+    权重默认为1.0（关系无权重属性时）
+    """
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     
     with driver.session() as session:
-        # 查询事类关联的类象
+        # 查询事类关联的类象（含权重）
         leixiang_result = session.run("""
-            MATCH (s:事类 {name: $name})-[:关联类象]->(l:Leixiang)
-            RETURN l.name AS leixiang_name
+            MATCH (s:事类 {name: $name})-[r:关联类象]->(l:Leixiang)
+            RETURN l.name AS leixiang_name, r.权重 AS weight
         """, name=shilei_name)
-        leixiang_set = {record['leixiang_name'] for record in leixiang_result}
+        leixiang_dict = {record['leixiang_name']: (record['weight'] if record['weight'] is not None else 1.0) for record in leixiang_result}
         
-        # 查询事类关联的神煞
+        # 查询事类关联的神煞（含权重）
         shensha_result = session.run("""
-            MATCH (s:事类 {name: $name})-[:关联神煞]->(ss:Shensha)
-            RETURN ss.name AS shensha_name
+            MATCH (s:事类 {name: $name})-[r:关联神煞]->(ss:Shensha)
+            RETURN ss.name AS shensha_name, r.权重 AS weight
         """, name=shilei_name)
-        shensha_set = {record['shensha_name'] for record in shensha_result}
+        shensha_dict = {record['shensha_name']: (record['weight'] if record['weight'] is not None else 1.0) for record in shensha_result}
     
     driver.close()
     
     return {
-        'leixiang': leixiang_set,
-        'shensha': shensha_set
+        'leixiang': leixiang_dict,
+        'shensha': shensha_dict
     }
 
 
 def fetch_all_shilei_rules() -> dict:
-    """一次查询获取所有事类的规则
+    """一次查询获取所有事类的规则（含权重）
     
     Returns:
         {
-            '财运': {'leixiang': set(...), 'shensha': set(...)},
-            '感情': {'leixiang': set(...), 'shensha': set(...)},
+            '财运': {'leixiang': {'类象名': 权重, ...}, 'shensha': {'神煞名': 权重, ...}},
             ...
         }
     """
@@ -496,29 +503,31 @@ def fetch_all_shilei_rules() -> dict:
     
     result = {}
     with driver.session() as session:
-        # 一次查询所有事类及其关联的类象
+        # 一次查询所有事类及其关联的类象（含权重）
         leixiang_result = session.run("""
-            MATCH (s:事类)-[:关联类象]->(l:Leixiang)
-            RETURN s.name AS shilei_name, l.name AS leixiang_name
+            MATCH (s:事类)-[r:关联类象]->(l:Leixiang)
+            RETURN s.name AS shilei_name, l.name AS leixiang_name, r.权重 AS weight
         """)
         for record in leixiang_result:
             shilei_name = record['shilei_name']
             leixiang_name = record['leixiang_name']
+            weight = record['weight'] if record['weight'] is not None else 1.0
             if shilei_name not in result:
-                result[shilei_name] = {'leixiang': set(), 'shensha': set()}
-            result[shilei_name]['leixiang'].add(leixiang_name)
+                result[shilei_name] = {'leixiang': {}, 'shensha': {}}
+            result[shilei_name]['leixiang'][leixiang_name] = weight
         
-        # 一次查询所有事类及其关联的神煞
+        # 一次查询所有事类及其关联的神煞（含权重）
         shensha_result = session.run("""
-            MATCH (s:事类)-[:关联神煞]->(ss:Shensha)
-            RETURN s.name AS shilei_name, ss.name AS shensha_name
+            MATCH (s:事类)-[r:关联神煞]->(ss:Shensha)
+            RETURN s.name AS shilei_name, ss.name AS shensha_name, r.权重 AS weight
         """)
         for record in shensha_result:
             shilei_name = record['shilei_name']
             shensha_name = record['shensha_name']
+            weight = record['weight'] if record['weight'] is not None else 1.0
             if shilei_name not in result:
-                result[shilei_name] = {'leixiang': set(), 'shensha': set()}
-            result[shilei_name]['shensha'].add(shensha_name)
+                result[shilei_name] = {'leixiang': {}, 'shensha': {}}
+            result[shilei_name]['shensha'][shensha_name] = weight
     
     driver.close()
     return result
@@ -622,7 +631,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         if dizhi:
             dz_key = f'DZ_{dizhi}'
             dz_leixiang = pos_leixiang.get(dz_key, {})
-            matched_items = {k: v for k, v in dz_leixiang.items() if k in shilei_leixiang}
+            matched_items = {k: v * shilei_leixiang[k] for k, v in dz_leixiang.items() if k in shilei_leixiang}
             if matched_items:
                 pos_zhengshu += 1
                 if detail:
@@ -630,7 +639,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
                         'symbol': dizhi,
                         'matched': True,
                         'intersection_count': sum(matched_items.values()),
-                        'intersection_sample': [f"{k}×{v}" if v > 1 else k for k, v in list(matched_items.items())[:3]]
+                        'intersection_sample': [f"{k}×{v:.1f}" if v != 1 else k for k, v in list(matched_items.items())[:3]]
                     }
             else:
                 if detail:
@@ -640,7 +649,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         if tianjiang:
             tj_key = f'TJ_{tianjiang}'
             tj_leixiang = pos_leixiang.get(tj_key, {})
-            matched_items = {k: v for k, v in tj_leixiang.items() if k in shilei_leixiang}
+            matched_items = {k: v * shilei_leixiang[k] for k, v in tj_leixiang.items() if k in shilei_leixiang}
             if matched_items:
                 pos_zhengshu += 1
                 if detail:
@@ -648,7 +657,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
                         'symbol': tianjiang,
                         'matched': True,
                         'intersection_count': sum(matched_items.values()),
-                        'intersection_sample': [f"{k}×{v}" if v > 1 else k for k, v in list(matched_items.items())[:3]]
+                        'intersection_sample': [f"{k}×{v:.1f}" if v != 1 else k for k, v in list(matched_items.items())[:3]]
                     }
             else:
                 if detail:
@@ -657,7 +666,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         # 六亲维度（从8008读取）
         for lq_key in liuqin_keys:
             lq_leixiang = pos_leixiang.get(lq_key, {})
-            matched_items = {k: v for k, v in lq_leixiang.items() if k in shilei_leixiang}
+            matched_items = {k: v * shilei_leixiang[k] for k, v in lq_leixiang.items() if k in shilei_leixiang}
             if matched_items:
                 pos_zhengshu += 1
                 if detail:
@@ -666,7 +675,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
                         'symbol': liuqin_name,
                         'matched': True,
                         'intersection_count': sum(matched_items.values()),
-                        'intersection_sample': [f"{k}×{v}" if v > 1 else k for k, v in list(matched_items.items())[:3]]
+                        'intersection_sample': [f"{k}×{v:.1f}" if v != 1 else k for k, v in list(matched_items.items())[:3]]
                     }
             else:
                 if detail and '六亲' not in dim_details:
@@ -676,7 +685,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         # 长生维度（从8008读取）
         for cs_key in changsheng_keys:
             cs_leixiang = pos_leixiang.get(cs_key, {})
-            matched_items = {k: v for k, v in cs_leixiang.items() if k in shilei_leixiang}
+            matched_items = {k: v * shilei_leixiang[k] for k, v in cs_leixiang.items() if k in shilei_leixiang}
             if matched_items:
                 pos_zhengshu += 1
                 if detail:
@@ -685,7 +694,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
                         'symbol': changsheng_name,
                         'matched': True,
                         'intersection_count': sum(matched_items.values()),
-                        'intersection_sample': [f"{k}×{v}" if v > 1 else k for k, v in list(matched_items.items())[:3]]
+                        'intersection_sample': [f"{k}×{v:.1f}" if v != 1 else k for k, v in list(matched_items.items())[:3]]
                     }
             else:
                 if detail and '长生' not in dim_details:
@@ -698,13 +707,13 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
             shensha_list = shensha_data[dizhi]
             pos_shensha = {s.get('name', '') for s in shensha_list if isinstance(s, dict)}
         
-        shensha_intersection = pos_shensha & shilei_shensha
+        shensha_intersection = {name for name in pos_shensha if name in shilei_shensha}
         if shensha_intersection:
             pos_zhengshu += 1
             if detail:
                 dim_details['神煞'] = {
                     'matched': True,
-                    'intersection_count': len(shensha_intersection),
+                    'intersection_count': sum(shilei_shensha[name] for name in shensha_intersection),
                     'intersection_sample': list(shensha_intersection)[:3]
                 }
         else:
@@ -826,14 +835,14 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             if dizhi:
                 dz_key = f'DZ_{dizhi}'
                 dz_leixiang = pos_leixiang.get(dz_key, {})
-                matched_items = {k: v for k, v in dz_leixiang.items() if k in shilei_leixiang}
+                matched_items = {k: v * shilei_leixiang[k] for k, v in dz_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
                     if detail:
                         dim_details['地支'] = {
                             'symbol': dizhi, 'matched': True,
                             'intersection_count': sum(matched_items.values()),
-                            'intersection_sample': [f"{k}×{v}" if v > 1 else k for k, v in list(matched_items.items())[:3]]
+                            'intersection_sample': [f"{k}×{v:.1f}" if v != 1 else k for k, v in list(matched_items.items())[:3]]
                         }
                 elif detail:
                     dim_details['地支'] = {'symbol': dizhi, 'matched': False}
@@ -842,14 +851,14 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             if tianjiang:
                 tj_key = f'TJ_{tianjiang}'
                 tj_leixiang = pos_leixiang.get(tj_key, {})
-                matched_items = {k: v for k, v in tj_leixiang.items() if k in shilei_leixiang}
+                matched_items = {k: v * shilei_leixiang[k] for k, v in tj_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
                     if detail:
                         dim_details['天将'] = {
                             'symbol': tianjiang, 'matched': True,
                             'intersection_count': sum(matched_items.values()),
-                            'intersection_sample': [f"{k}×{v}" if v > 1 else k for k, v in list(matched_items.items())[:3]]
+                            'intersection_sample': [f"{k}×{v:.1f}" if v != 1 else k for k, v in list(matched_items.items())[:3]]
                         }
                 elif detail:
                     dim_details['天将'] = {'symbol': tianjiang, 'matched': False}
@@ -857,7 +866,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             # 六亲维度（从8008读取）
             for lq_key in liuqin_keys:
                 lq_leixiang = pos_leixiang.get(lq_key, {})
-                matched_items = {k: v for k, v in lq_leixiang.items() if k in shilei_leixiang}
+                matched_items = {k: v * shilei_leixiang[k] for k, v in lq_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
                     if detail:
@@ -865,7 +874,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
                         dim_details['六亲'] = {
                             'symbol': liuqin_name, 'matched': True,
                             'intersection_count': sum(matched_items.values()),
-                            'intersection_sample': [f"{k}×{v}" if v > 1 else k for k, v in list(matched_items.items())[:3]]
+                            'intersection_sample': [f"{k}×{v:.1f}" if v != 1 else k for k, v in list(matched_items.items())[:3]]
                         }
                 elif detail and dim_details is not None and '六亲' not in dim_details:
                     liuqin_name = lq_key[3:]
@@ -874,7 +883,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             # 长生维度（从8008读取）
             for cs_key in changsheng_keys:
                 cs_leixiang = pos_leixiang.get(cs_key, {})
-                matched_items = {k: v for k, v in cs_leixiang.items() if k in shilei_leixiang}
+                matched_items = {k: v * shilei_leixiang[k] for k, v in cs_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
                     if detail:
@@ -882,7 +891,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
                         dim_details['长生'] = {
                             'symbol': changsheng_name, 'matched': True,
                             'intersection_count': sum(matched_items.values()),
-                            'intersection_sample': [f"{k}×{v}" if v > 1 else k for k, v in list(matched_items.items())[:3]]
+                            'intersection_sample': [f"{k}×{v:.1f}" if v != 1 else k for k, v in list(matched_items.items())[:3]]
                         }
                 elif detail and dim_details is not None and '长生' not in dim_details:
                     changsheng_name = cs_key[3:]
@@ -893,13 +902,13 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             if dizhi and dizhi in shensha_data:
                 shensha_list = shensha_data[dizhi]
                 pos_shensha = {s.get('name', '') for s in shensha_list if isinstance(s, dict)}
-            shensha_intersection = pos_shensha & shilei_shensha
+            shensha_intersection = {name for name in pos_shensha if name in shilei_shensha}
             if shensha_intersection:
                 pos_zhengshu += 1
                 if detail:
                     dim_details['神煞'] = {
                         'matched': True,
-                        'intersection_count': len(shensha_intersection),
+                        'intersection_count': sum(shilei_shensha[name] for name in shensha_intersection),
                         'intersection_sample': list(shensha_intersection)[:3]
                     }
             elif detail:
@@ -1047,19 +1056,28 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             if dizhi:
                 dz_key = f'DZ_{dizhi}'
                 dz_leixiang = pos_leixiang.get(dz_key, {})
-                # 找出匹配的类象及其权重
+                # 找出匹配的类象及其权重（含事类关联权重）
                 matched_items = []
                 for lx_name, weight in dz_leixiang.items():
                     if lx_name in shilei_leixiang:
-                        matched_items.append((lx_name, weight))
-                # 一维类象只贡献1次，多维类象正常累加
-                has_1d = any(w == 1 for _, w in matched_items)
-                multi_dim_sum = sum(w for _, w in matched_items if w > 1)
-                total_weight = (1 if has_1d else 0) + multi_dim_sum
+                        shilei_weight = shilei_leixiang[lx_name]
+                        matched_items.append((lx_name, weight, shilei_weight))
+                # 分离一维和多维
+                one_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w == 1]
+                multi_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w > 1]
+                # 一维只取事类权重最大的1个，多维正常累加
+                total_weight = 0.0
+                if one_dim_items:
+                    max_sw = max(sw for _, _, sw in one_dim_items)
+                    total_weight += max_sw
+                for _, w, sw in multi_dim_items:
+                    total_weight += w * sw
                 # 格式化输出
                 matched_str = []
-                for lx_name, weight in matched_items:
-                    if weight > 1:
+                for lx_name, weight, shilei_weight in matched_items:
+                    if shilei_weight != 1:
+                        matched_str.append(f"{lx_name}×{shilei_weight}")
+                    elif weight > 1:
                         matched_str.append(f"{lx_name}×{weight}")
                     else:
                         matched_str.append(lx_name)
@@ -1076,14 +1094,21 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 matched_items = []
                 for lx_name, weight in tj_leixiang.items():
                     if lx_name in shilei_leixiang:
-                        matched_items.append((lx_name, weight))
-                # 一维类象只贡献1次，多维类象正常累加
-                has_1d = any(w == 1 for _, w in matched_items)
-                multi_dim_sum = sum(w for _, w in matched_items if w > 1)
-                total_weight = (1 if has_1d else 0) + multi_dim_sum
+                        shilei_weight = shilei_leixiang[lx_name]
+                        matched_items.append((lx_name, weight, shilei_weight))
+                one_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w == 1]
+                multi_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w > 1]
+                total_weight = 0.0
+                if one_dim_items:
+                    max_sw = max(sw for _, _, sw in one_dim_items)
+                    total_weight += max_sw
+                for _, w, sw in multi_dim_items:
+                    total_weight += w * sw
                 matched_str = []
-                for lx_name, weight in matched_items:
-                    if weight > 1:
+                for lx_name, weight, shilei_weight in matched_items:
+                    if shilei_weight != 1:
+                        matched_str.append(f"{lx_name}×{shilei_weight}")
+                    elif weight > 1:
                         matched_str.append(f"{lx_name}×{weight}")
                     else:
                         matched_str.append(lx_name)
@@ -1099,14 +1124,21 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 matched_items = []
                 for lx_name, weight in lq_leixiang.items():
                     if lx_name in shilei_leixiang:
-                        matched_items.append((lx_name, weight))
-                # 一维类象只贡献1次，多维类象正常累加
-                has_1d = any(w == 1 for _, w in matched_items)
-                multi_dim_sum = sum(w for _, w in matched_items if w > 1)
-                total_weight = (1 if has_1d else 0) + multi_dim_sum
+                        shilei_weight = shilei_leixiang[lx_name]
+                        matched_items.append((lx_name, weight, shilei_weight))
+                one_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w == 1]
+                multi_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w > 1]
+                total_weight = 0.0
+                if one_dim_items:
+                    max_sw = max(sw for _, _, sw in one_dim_items)
+                    total_weight += max_sw
+                for _, w, sw in multi_dim_items:
+                    total_weight += w * sw
                 matched_str = []
-                for lx_name, weight in matched_items:
-                    if weight > 1:
+                for lx_name, weight, shilei_weight in matched_items:
+                    if shilei_weight != 1:
+                        matched_str.append(f"{lx_name}×{shilei_weight}")
+                    elif weight > 1:
                         matched_str.append(f"{lx_name}×{weight}")
                     else:
                         matched_str.append(lx_name)
@@ -1123,14 +1155,21 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 matched_items = []
                 for lx_name, weight in lq_leixiang.items():
                     if lx_name in shilei_leixiang:
-                        matched_items.append((lx_name, weight))
-                # 一维类象只贡献1次，多维类象正常累加
-                has_1d = any(w == 1 for _, w in matched_items)
-                multi_dim_sum = sum(w for _, w in matched_items if w > 1)
-                total_weight = (1 if has_1d else 0) + multi_dim_sum
+                        shilei_weight = shilei_leixiang[lx_name]
+                        matched_items.append((lx_name, weight, shilei_weight))
+                one_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w == 1]
+                multi_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w > 1]
+                total_weight = 0.0
+                if one_dim_items:
+                    max_sw = max(sw for _, _, sw in one_dim_items)
+                    total_weight += max_sw
+                for _, w, sw in multi_dim_items:
+                    total_weight += w * sw
                 matched_str = []
-                for lx_name, weight in matched_items:
-                    if weight > 1:
+                for lx_name, weight, shilei_weight in matched_items:
+                    if shilei_weight != 1:
+                        matched_str.append(f"{lx_name}×{shilei_weight}")
+                    elif weight > 1:
                         matched_str.append(f"{lx_name}×{weight}")
                     else:
                         matched_str.append(lx_name)
@@ -1147,14 +1186,21 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 matched_items = []
                 for lx_name, weight in cs_leixiang.items():
                     if lx_name in shilei_leixiang:
-                        matched_items.append((lx_name, weight))
-                # 一维类象只贡献1次，多维类象正常累加
-                has_1d = any(w == 1 for _, w in matched_items)
-                multi_dim_sum = sum(w for _, w in matched_items if w > 1)
-                total_weight = (1 if has_1d else 0) + multi_dim_sum
+                        shilei_weight = shilei_leixiang[lx_name]
+                        matched_items.append((lx_name, weight, shilei_weight))
+                one_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w == 1]
+                multi_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w > 1]
+                total_weight = 0.0
+                if one_dim_items:
+                    max_sw = max(sw for _, _, sw in one_dim_items)
+                    total_weight += max_sw
+                for _, w, sw in multi_dim_items:
+                    total_weight += w * sw
                 matched_str = []
-                for lx_name, weight in matched_items:
-                    if weight > 1:
+                for lx_name, weight, shilei_weight in matched_items:
+                    if shilei_weight != 1:
+                        matched_str.append(f"{lx_name}×{shilei_weight}")
+                    elif weight > 1:
                         matched_str.append(f"{lx_name}×{weight}")
                     else:
                         matched_str.append(lx_name)
@@ -1165,16 +1211,17 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 }
                 dim_matches['长生'] = total_weight
             
-            # 神煞维度
+            # 神煞维度（含事类关联权重）
             pos_shensha = set()
             if dizhi and dizhi in shensha_data:
                 shensha_list = shensha_data[dizhi]
                 pos_shensha = {s.get('name', '') for s in shensha_list if isinstance(s, dict)}
-            shensha_intersection = pos_shensha & shilei_shensha
+            shensha_intersection = {name for name in pos_shensha if name in shilei_shensha}
+            shensha_weighted_score = sum(shilei_shensha[name] for name in shensha_intersection)
             dim_details['神煞'] = {
-                'matched': list(shensha_intersection)
+                'matched': [f"{name}×{shilei_shensha[name]}" if shilei_shensha[name] != 1 else name for name in shensha_intersection]
             }
-            dim_matches['神煞'] = len(shensha_intersection)
+            dim_matches['神煞'] = shensha_weighted_score
             
             # 计算加权分数
             score_info = calculate_weighted_score(dim_matches)
