@@ -116,8 +116,8 @@ def calculate_weighted_score(dim_matches: dict, shilei_name: str = None) -> dict
     """计算单个位置的加权分数
     
     Args:
-        dim_matches: 各维度匹配数
-            {'天将': 2, '地支': 0, '六亲': 1, '长生': 0, '神煞': 3}
+        dim_matches: 各维度匹配数（六维度：天将/地支/地支六亲/遁干六亲/长生/神煞）
+            {'天将': 2, '地支': 0, '地支六亲': 1, '遁干六亲': 0, '长生': 0, '神煞': 3}
         shilei_name: 事类名称（可选），用于查询事类专属组合比例
     
     Returns:
@@ -125,7 +125,7 @@ def calculate_weighted_score(dim_matches: dict, shilei_name: str = None) -> dict
             'score': 15.5,  # 总分
             'base_score': 8.0,  # 维度基础分
             'combo_score': 7.5,  # 组合加分
-            'matched_dims': ['天将', '六亲', '神煞']  # 命中的维度
+            'matched_dims': ['天将', '地支六亲', '神煞']  # 命中的维度
         }
     """
     # 1. 计算维度基础分（维度内累加，不封顶）
@@ -191,7 +191,9 @@ CHANGSHENG_ORDER = ['长生', '沐浴', '冠带', '临官', '帝旺', '衰', '�
 POSITION_NAMES = [
     '第1课上神', '第2课上神', '第3课上神', '第4课上神',
     '初传', '中传', '末传',
-    '占时', '行年', '本命', '行年上神', '本命上神', '月将所乘天将'
+    '占时', '行年', '本命', '行年_2', '本命_2',
+    '行年上神', '本命上神', '行年上神_2', '本命上神_2',
+    '月将所乘天将'
 ]
 
 
@@ -627,12 +629,12 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
     sanchuan_positions = parse_sanchuan_positions(ke_data.get('sanchuan', ''), ri_gan, ri_zhi)
     positions.update(sanchuan_positions)
     
-    # 行年上神
-    xingnian_branch = ke_data.get('xingnian_branch')
+    # 行年上神（男方）
+    xingnian_branch_1 = ke_data.get('xingnian_branch_1')
     tiandipan = get_tiandipan(ke_data)
     tianjiang_position = ke_data.get('tianjiang_position', {})
-    if xingnian_branch and tiandipan:
-        xingnian_shangshen = tiandipan.get(xingnian_branch)
+    if xingnian_branch_1 and tiandipan:
+        xingnian_shangshen = tiandipan.get(xingnian_branch_1)
         if xingnian_shangshen:
             xingnian_tianjiang = tianjiang_position.get(xingnian_shangshen, '')
             positions['行年上神'] = {
@@ -640,10 +642,10 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
                 '天将': xingnian_tianjiang,
             }
     
-    # 本命上神
-    benming = ke_data.get('benming')
-    if benming and len(benming) >= 2:
-        benming_dizhi = benming[1]  # 本命干支的地支部分
+    # 本命上神（男方）
+    benming_1 = ke_data.get('benming_1')
+    if benming_1 and len(benming_1) >= 2:
+        benming_dizhi = benming_1[1]  # 本命干支的地支部分
         if tiandipan:
             benming_shangshen = tiandipan.get(benming_dizhi)
             if benming_shangshen:
@@ -651,6 +653,30 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
                 positions['本命上神'] = {
                     '地支': benming_shangshen,
                     '天将': benming_tianjiang,
+                }
+    
+    # 行年上神_2（女方）
+    xingnian_branch_2 = ke_data.get('xingnian_branch_2')
+    if xingnian_branch_2 and tiandipan:
+        xingnian_shangshen_2 = tiandipan.get(xingnian_branch_2)
+        if xingnian_shangshen_2:
+            xingnian_tianjiang_2 = tianjiang_position.get(xingnian_shangshen_2, '')
+            positions['行年上神_2'] = {
+                '地支': xingnian_shangshen_2,
+                '天将': xingnian_tianjiang_2,
+            }
+    
+    # 本命上神_2（女方）
+    benming_2 = ke_data.get('benming_2')
+    if benming_2 and len(benming_2) >= 2:
+        benming_dizhi_2 = benming_2[1]
+        if tiandipan:
+            benming_shangshen_2 = tiandipan.get(benming_dizhi_2)
+            if benming_shangshen_2:
+                benming_tianjiang_2 = tianjiang_position.get(benming_shangshen_2, '')
+                positions['本命上神_2'] = {
+                    '地支': benming_shangshen_2,
+                    '天将': benming_tianjiang_2,
                 }
     
     # 占时
@@ -662,21 +688,40 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
             '天将': zhanshi_tianjiang,
         }
     
-    # 行年
-    if xingnian_branch:
-        xingnian_tianjiang = tianjiang_position.get(xingnian_branch, '') if isinstance(tianjiang_position, dict) else ''
+    # 行年（男方）
+    if xingnian_branch_1:
+        xingnian_tianjiang = tianjiang_position.get(xingnian_branch_1, '') if isinstance(tianjiang_position, dict) else ''
         positions['行年'] = {
-            '地支': xingnian_branch,
+            '地支': xingnian_branch_1,
             '天将': xingnian_tianjiang,
         }
     
-    # 本命
-    if benming and len(benming) >= 2:
-        benming_dizhi = benming[1]
+    # 行年_2（女方）
+    xingnian_branch_2 = ke_data.get('xingnian_branch_2')
+    if xingnian_branch_2:
+        xingnian_tianjiang_2 = tianjiang_position.get(xingnian_branch_2, '') if isinstance(tianjiang_position, dict) else ''
+        positions['行年_2'] = {
+            '地支': xingnian_branch_2,
+            '天将': xingnian_tianjiang_2,
+        }
+    
+    # 本命（男方）
+    if benming_1 and len(benming_1) >= 2:
+        benming_dizhi = benming_1[1]
         benming_tianjiang = tianjiang_position.get(benming_dizhi, '') if isinstance(tianjiang_position, dict) else ''
         positions['本命'] = {
             '地支': benming_dizhi,
             '天将': benming_tianjiang,
+        }
+    
+    # 本命_2（女方）
+    benming_2 = ke_data.get('benming_2')
+    if benming_2 and len(benming_2) >= 2:
+        benming_dizhi_2 = benming_2[1]
+        benming_tianjiang_2 = tianjiang_position.get(benming_dizhi_2, '') if isinstance(tianjiang_position, dict) else ''
+        positions['本命_2'] = {
+            '地支': benming_dizhi_2,
+            '天将': benming_tianjiang_2,
         }
     
     # 月将所乘天将
@@ -723,8 +768,8 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         liuqin_keys = [k for k in pos_leixiang.keys() if k.startswith('LQ_')]
         changsheng_keys = [k for k in pos_leixiang.keys() if k.startswith('CS_')]
         
-        # 地支维度
-        if dizhi:
+        # 地支维度（月将所乘天将不计算地支）
+        if dizhi and pos_name != '月将所乘天将':
             dz_key = f'DZ_{dizhi}'
             dz_leixiang = pos_leixiang.get(dz_key, {})
             matched_items = {k: v * shilei_leixiang[k] for k, v in dz_leixiang.items() if k in shilei_leixiang}
@@ -778,28 +823,29 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
                     liuqin_name = lq_key[3:]
                     dim_details['六亲'] = {'symbol': liuqin_name, 'matched': False}
         
-        # 长生维度（从8008读取）
-        for cs_key in changsheng_keys:
-            cs_leixiang = pos_leixiang.get(cs_key, {})
-            matched_items = {k: v * shilei_leixiang[k] for k, v in cs_leixiang.items() if k in shilei_leixiang}
-            if matched_items:
-                pos_zhengshu += 1
-                if detail:
-                    changsheng_name = cs_key[3:]  # 去掉CS_前缀
-                    dim_details['长生'] = {
-                        'symbol': changsheng_name,
-                        'matched': True,
-                        'intersection_count': sum(matched_items.values()),
-                        'intersection_sample': [f"{k}×{v:.1f}" if v != 1 else k for k, v in list(matched_items.items())[:3]]
-                    }
-            else:
-                if detail and '长生' not in dim_details:
-                    changsheng_name = cs_key[3:]
-                    dim_details['长生'] = {'symbol': changsheng_name, 'matched': False}
+        # 长生维度（从8008读取，月将所乘天将不计算长生）
+        if pos_name != '月将所乘天将':
+            for cs_key in changsheng_keys:
+                cs_leixiang = pos_leixiang.get(cs_key, {})
+                matched_items = {k: v * shilei_leixiang[k] for k, v in cs_leixiang.items() if k in shilei_leixiang}
+                if matched_items:
+                    pos_zhengshu += 1
+                    if detail:
+                        changsheng_name = cs_key[3:]  # 去掉CS_前缀
+                        dim_details['长生'] = {
+                            'symbol': changsheng_name,
+                            'matched': True,
+                            'intersection_count': sum(matched_items.values()),
+                            'intersection_sample': [f"{k}×{v:.1f}" if v != 1 else k for k, v in list(matched_items.items())[:3]]
+                        }
+                else:
+                    if detail and '长生' not in dim_details:
+                        changsheng_name = cs_key[3:]
+                        dim_details['长生'] = {'symbol': changsheng_name, 'matched': False}
         
-        # 神煞维度
+        # 神煞维度（月将所乘天将不计算神煞）
         pos_shensha = set()
-        if dizhi and dizhi in shensha_data:
+        if pos_name != '月将所乘天将' and dizhi and dizhi in shensha_data:
             shensha_list = shensha_data[dizhi]
             pos_shensha = {s.get('name', '') for s in shensha_list if isinstance(s, dict)}
         
@@ -866,12 +912,12 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
     sanchuan_positions = parse_sanchuan_positions(ke_data.get('sanchuan', ''), ri_gan, ri_zhi)
     positions.update(sanchuan_positions)
     
-    # 行年上神
-    xingnian_branch = ke_data.get('xingnian_branch')
+    # 行年上神（男方）
+    xingnian_branch_1 = ke_data.get('xingnian_branch_1')
     tiandipan = get_tiandipan(ke_data)
     tianjiang_position = ke_data.get('tianjiang_position', {})
-    if xingnian_branch and tiandipan:
-        xingnian_shangshen = tiandipan.get(xingnian_branch)
+    if xingnian_branch_1 and tiandipan:
+        xingnian_shangshen = tiandipan.get(xingnian_branch_1)
         if xingnian_shangshen:
             xingnian_tianjiang = tianjiang_position.get(xingnian_shangshen, '')
             positions['行年上神'] = {
@@ -879,10 +925,10 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
                 '天将': xingnian_tianjiang,
             }
     
-    # 本命上神
-    benming = ke_data.get('benming')
-    if benming and len(benming) >= 2:
-        benming_dizhi = benming[1]  # 本命干支的地支部分
+    # 本命上神（男方）
+    benming_1 = ke_data.get('benming_1')
+    if benming_1 and len(benming_1) >= 2:
+        benming_dizhi = benming_1[1]  # 本命干支的地支部分
         if tiandipan:
             benming_shangshen = tiandipan.get(benming_dizhi)
             if benming_shangshen:
@@ -890,6 +936,30 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
                 positions['本命上神'] = {
                     '地支': benming_shangshen,
                     '天将': benming_tianjiang,
+                }
+    
+    # 行年上神_2（女方）
+    xingnian_branch_2 = ke_data.get('xingnian_branch_2')
+    if xingnian_branch_2 and tiandipan:
+        xingnian_shangshen_2 = tiandipan.get(xingnian_branch_2)
+        if xingnian_shangshen_2:
+            xingnian_tianjiang_2 = tianjiang_position.get(xingnian_shangshen_2, '')
+            positions['行年上神_2'] = {
+                '地支': xingnian_shangshen_2,
+                '天将': xingnian_tianjiang_2,
+            }
+    
+    # 本命上神_2（女方）
+    benming_2 = ke_data.get('benming_2')
+    if benming_2 and len(benming_2) >= 2:
+        benming_dizhi_2 = benming_2[1]
+        if tiandipan:
+            benming_shangshen_2 = tiandipan.get(benming_dizhi_2)
+            if benming_shangshen_2:
+                benming_tianjiang_2 = tianjiang_position.get(benming_shangshen_2, '')
+                positions['本命上神_2'] = {
+                    '地支': benming_shangshen_2,
+                    '天将': benming_tianjiang_2,
                 }
     
     # 占时
@@ -901,21 +971,40 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             '天将': zhanshi_tianjiang,
         }
     
-    # 行年
-    if xingnian_branch:
-        xingnian_tianjiang = tianjiang_position.get(xingnian_branch, '') if isinstance(tianjiang_position, dict) else ''
+    # 行年（男方）
+    if xingnian_branch_1:
+        xingnian_tianjiang = tianjiang_position.get(xingnian_branch_1, '') if isinstance(tianjiang_position, dict) else ''
         positions['行年'] = {
-            '地支': xingnian_branch,
+            '地支': xingnian_branch_1,
             '天将': xingnian_tianjiang,
         }
     
-    # 本命
-    if benming and len(benming) >= 2:
-        benming_dizhi = benming[1]
+    # 行年_2（女方）
+    xingnian_branch_2 = ke_data.get('xingnian_branch_2')
+    if xingnian_branch_2:
+        xingnian_tianjiang_2 = tianjiang_position.get(xingnian_branch_2, '') if isinstance(tianjiang_position, dict) else ''
+        positions['行年_2'] = {
+            '地支': xingnian_branch_2,
+            '天将': xingnian_tianjiang_2,
+        }
+    
+    # 本命（男方）
+    if benming_1 and len(benming_1) >= 2:
+        benming_dizhi = benming_1[1]
         benming_tianjiang = tianjiang_position.get(benming_dizhi, '') if isinstance(tianjiang_position, dict) else ''
         positions['本命'] = {
             '地支': benming_dizhi,
             '天将': benming_tianjiang,
+        }
+    
+    # 本命_2（女方）
+    benming_2 = ke_data.get('benming_2')
+    if benming_2 and len(benming_2) >= 2:
+        benming_dizhi_2 = benming_2[1]
+        benming_tianjiang_2 = tianjiang_position.get(benming_dizhi_2, '') if isinstance(tianjiang_position, dict) else ''
+        positions['本命_2'] = {
+            '地支': benming_dizhi_2,
+            '天将': benming_tianjiang_2,
         }
     
     # 月将所乘天将
@@ -934,7 +1023,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
     # 4. 提取神煞（只做1次）
     shensha_data = ke_data.get('shensha', {})
     
-    # 5. 一次查询所有事类规则（只查1次Neo4j）
+    # 5. 一次查询所有事类规则（避免N次数据库查询）
     all_rules = fetch_all_shilei_rules()
     
     # 6. 对每个事类计算证数
@@ -1121,12 +1210,12 @@ def detect_all_for_weight(ke_data: dict) -> dict:
     sanchuan_positions = parse_sanchuan_positions(ke_data.get('sanchuan', ''), ri_gan, ri_zhi)
     positions.update(sanchuan_positions)
     
-    # 行年上神
-    xingnian_branch = ke_data.get('xingnian_branch')
+    # 行年上神（男方）
+    xingnian_branch_1 = ke_data.get('xingnian_branch_1')
     tiandipan = get_tiandipan(ke_data)
     tianjiang_position = ke_data.get('tianjiang_position', {})
-    if xingnian_branch and tiandipan:
-        xingnian_shangshen = tiandipan.get(xingnian_branch)
+    if xingnian_branch_1 and tiandipan:
+        xingnian_shangshen = tiandipan.get(xingnian_branch_1)
         if xingnian_shangshen:
             xingnian_tianjiang = tianjiang_position.get(xingnian_shangshen, '')
             positions['行年上神'] = {
@@ -1134,10 +1223,10 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 '天将': xingnian_tianjiang,
             }
     
-    # 本命上神
-    benming = ke_data.get('benming')
-    if benming and len(benming) >= 2:
-        benming_dizhi = benming[1]  # 本命干支的地支部分
+    # 本命上神（男方）
+    benming_1 = ke_data.get('benming_1')
+    if benming_1 and len(benming_1) >= 2:
+        benming_dizhi = benming_1[1]  # 本命干支的地支部分
         if tiandipan:
             benming_shangshen = tiandipan.get(benming_dizhi)
             if benming_shangshen:
@@ -1145,6 +1234,30 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 positions['本命上神'] = {
                     '地支': benming_shangshen,
                     '天将': benming_tianjiang,
+                }
+    
+    # 行年上神_2（女方）
+    xingnian_branch_2 = ke_data.get('xingnian_branch_2')
+    if xingnian_branch_2 and tiandipan:
+        xingnian_shangshen_2 = tiandipan.get(xingnian_branch_2)
+        if xingnian_shangshen_2:
+            xingnian_tianjiang_2 = tianjiang_position.get(xingnian_shangshen_2, '')
+            positions['行年上神_2'] = {
+                '地支': xingnian_shangshen_2,
+                '天将': xingnian_tianjiang_2,
+            }
+    
+    # 本命上神_2（女方）
+    benming_2 = ke_data.get('benming_2')
+    if benming_2 and len(benming_2) >= 2:
+        benming_dizhi_2 = benming_2[1]
+        if tiandipan:
+            benming_shangshen_2 = tiandipan.get(benming_dizhi_2)
+            if benming_shangshen_2:
+                benming_tianjiang_2 = tianjiang_position.get(benming_shangshen_2, '')
+                positions['本命上神_2'] = {
+                    '地支': benming_shangshen_2,
+                    '天将': benming_tianjiang_2,
                 }
     
     # 占时
@@ -1156,21 +1269,40 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             '天将': zhanshi_tianjiang,
         }
     
-    # 行年
-    if xingnian_branch:
-        xingnian_tianjiang = tianjiang_position.get(xingnian_branch, '') if isinstance(tianjiang_position, dict) else ''
+    # 行年（男方）
+    if xingnian_branch_1:
+        xingnian_tianjiang = tianjiang_position.get(xingnian_branch_1, '') if isinstance(tianjiang_position, dict) else ''
         positions['行年'] = {
-            '地支': xingnian_branch,
+            '地支': xingnian_branch_1,
             '天将': xingnian_tianjiang,
         }
     
-    # 本命
-    if benming and len(benming) >= 2:
-        benming_dizhi = benming[1]
+    # 行年_2（女方）
+    xingnian_branch_2 = ke_data.get('xingnian_branch_2')
+    if xingnian_branch_2:
+        xingnian_tianjiang_2 = tianjiang_position.get(xingnian_branch_2, '') if isinstance(tianjiang_position, dict) else ''
+        positions['行年_2'] = {
+            '地支': xingnian_branch_2,
+            '天将': xingnian_tianjiang_2,
+        }
+    
+    # 本命（男方）
+    if benming_1 and len(benming_1) >= 2:
+        benming_dizhi = benming_1[1]
         benming_tianjiang = tianjiang_position.get(benming_dizhi, '') if isinstance(tianjiang_position, dict) else ''
         positions['本命'] = {
             '地支': benming_dizhi,
             '天将': benming_tianjiang,
+        }
+    
+    # 本命_2（女方）
+    benming_2 = ke_data.get('benming_2')
+    if benming_2 and len(benming_2) >= 2:
+        benming_dizhi_2 = benming_2[1]
+        benming_tianjiang_2 = tianjiang_position.get(benming_dizhi_2, '') if isinstance(tianjiang_position, dict) else ''
+        positions['本命_2'] = {
+            '地支': benming_dizhi_2,
+            '天将': benming_tianjiang_2,
         }
     
     # 月将所乘天将
