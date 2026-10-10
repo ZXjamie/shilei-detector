@@ -17,6 +17,9 @@ NEO4J_PASSWORD = "password123"
 # 维度权重（从 Neo4j 加载）
 WEIGHT_CONFIG = {}
 
+# 位置权重（从 Neo4j 加载，键为位置类型名；男/女位置共用同名权重）
+POSITION_WEIGHT = {}
+
 # 2维组合比例（从 Neo4j 加载）
 # key: frozenset(['维度1', '维度2']), value: 比例
 COMBINATION_RATIO = {}
@@ -33,7 +36,7 @@ JUJI_CONFIG = {}
 
 def load_weight_config():
     """从 Neo4j 加载权重配置到内存"""
-    global WEIGHT_CONFIG, COMBINATION_RATIO, COMBINATION_RATIO_BY_SHILEI, JUJI_CONFIG
+    global WEIGHT_CONFIG, COMBINATION_RATIO, COMBINATION_RATIO_BY_SHILEI, JUJI_CONFIG, POSITION_WEIGHT
     
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     
@@ -80,8 +83,19 @@ def load_weight_config():
             if shilei and ratio is not None:
                 JUJI_CONFIG[shilei] = float(ratio)
     
+        # 加载位置权重（键为位置类型名；男/女位置共用）
+        result = session.run("""
+            MATCH (w:权重配置 {类型: '位置'})
+            RETURN w.名称 AS name, w.权重 AS weight
+        """)
+        for record in result:
+            name = record['name']
+            weight = record['weight']
+            if name and weight is not None:
+                POSITION_WEIGHT[name] = float(weight)
+    
     driver.close()
-    print(f"[权重配置] 已加载: 维度权重={WEIGHT_CONFIG}, 2维组合={len(COMBINATION_RATIO)}个, 聚集系数={JUJI_CONFIG}")
+    print(f"[权重配置] 已加载: 维度权重={WEIGHT_CONFIG}, 位置权重={POSITION_WEIGHT}, 2维组合={len(COMBINATION_RATIO)}个, 聚集系数={JUJI_CONFIG}")
 
 
 def get_combination_ratio(dims: set, shilei_name: str = None) -> float:
@@ -186,6 +200,9 @@ TIANJIANG_FULL = {
 
 # 十二长生顺序
 CHANGSHENG_ORDER = ['长生', '沐浴', '冠带', '临官', '帝旺', '衰', '病', '死', '墓', '绝', '胎', '养']
+
+# 位置总数（位置覆盖率加权用：事类总分 = Σ位置得分 × 命中位置数 / 12）
+POSITION_TOTAL = 12
 
 # 13处位置名（与8008输出对齐）
 POSITION_NAMES = [
@@ -1523,18 +1540,26 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 # weighted_match 已经包含事类关联权重，再乘以维度权重
                 dim_details[dim_name]['score'] = round(weighted_match * dim_weight, 1)
             
+            # 位置权重（男/女位置共用同名权重，去掉 _2 后缀查表）
+            pos_weight = POSITION_WEIGHT.get(pos_name.replace('_2', ''), 1.0)
+            pos_score = round(score_info['score'] * pos_weight, 1)
+            
             if score_info['score'] > 0:
                 pos_scores[pos_name] = {
-                    'score': score_info['score'],
+                    'score': pos_score,
+                    'pos_weight': pos_weight,
                     'base': score_info['base_score'],
                     'combo': score_info['combo_score'],
                     'dims': dim_details
                 }
-                total_score += score_info['score']
+                total_score += pos_score
         
         if total_score > 0:
+            # 命中的位置类型数（男/女年命合并计 1，位置类型总数恒为 12）
+            hit = len({p.replace('_2', '') for p in pos_scores})
             shilei_results[shilei_name] = {
-                'total_score': round(total_score, 1),
+                'total_score': round(total_score * hit / POSITION_TOTAL, 1),
+                'hit_positions': hit,
                 'positions': pos_scores
             }
     
