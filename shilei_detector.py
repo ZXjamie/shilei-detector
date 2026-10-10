@@ -151,9 +151,9 @@ def calculate_weighted_score(dim_matches: dict, shilei_name: str = None) -> dict
     total_score = base_score + combo_score
     
     return {
-        'score': round(total_score, 2),
-        'base_score': round(base_score, 2),
-        'combo_score': round(combo_score, 2),
+        'score': round(total_score, 1),
+        'base_score': round(base_score, 1),
+        'combo_score': round(combo_score, 1),
         'matched_dims': matched_dims
     }
 
@@ -192,8 +192,7 @@ POSITION_NAMES = [
     '第1课上神', '第2课上神', '第3课上神', '第4课上神',
     '初传', '中传', '末传',
     '占时', '行年', '本命', '行年_2', '本命_2',
-    '行年上神', '本命上神', '行年上神_2', '本命上神_2',
-    '月将所乘天将'
+    '行年上神', '本命上神', '行年上神_2', '本命上神_2'
 ]
 
 
@@ -550,7 +549,15 @@ def fetch_all_shilei_rules() -> dict:
     
     Returns:
         {
-            '财运': {'leixiang': {'类象名': 权重, ...}, 'shensha': {'神煞名': 权重, ...}},
+            '财运': {
+                'leixiang': {
+                    'dizhi': {'类象名': 权重, ...},
+                    'tianjiang': {'类象名': 权重, ...},
+                    'liuqin': {'类象名': 权重, ...},
+                    'changsheng': {'类象名': 权重, ...}
+                },
+                'shensha': {'神煞名': 权重, ...}
+            },
             ...
         }
     """
@@ -558,25 +565,21 @@ def fetch_all_shilei_rules() -> dict:
     
     result = {}
     with driver.session() as session:
-        # 一次查询所有事类及其关联的类象（含权重，含天将专属权重）
+        # 一次查询所有事类及其关联的类象（含权重和维度）
         leixiang_result = session.run("""
             MATCH (s:事类)-[r:关联类象]->(l:Leixiang)
-            RETURN s.name AS shilei_name, l.name AS leixiang_name, r.权重 AS weight, r.天将 AS tianjiang
+            RETURN s.name AS shilei_name, l.name AS leixiang_name, r.权重 AS weight, r.维度 AS dim
         """)
         for record in leixiang_result:
             shilei_name = record['shilei_name']
             leixiang_name = record['leixiang_name']
             weight = record['weight'] if record['weight'] is not None else 1.0
-            tianjiang = record['tianjiang']  # 可能为 None
+            dim = record['dim'] if record['dim'] else 'dizhi'  # 默认地支
             if shilei_name not in result:
-                result[shilei_name] = {'leixiang': {}, 'leixiang_tj': {}, 'shensha': {}}
-            if tianjiang:
-                # 天将专属权重：{类象名: {天将: weight}}
-                if leixiang_name not in result[shilei_name]['leixiang_tj']:
-                    result[shilei_name]['leixiang_tj'][leixiang_name] = {}
-                result[shilei_name]['leixiang_tj'][leixiang_name][tianjiang] = weight
-            else:
-                result[shilei_name]['leixiang'][leixiang_name] = weight
+                result[shilei_name] = {'leixiang': {}, 'shensha': {}}
+            if dim not in result[shilei_name]['leixiang']:
+                result[shilei_name]['leixiang'][dim] = {}
+            result[shilei_name]['leixiang'][dim][leixiang_name] = weight
         
         # 一次查询所有事类及其关联的神煞（含权重）
         shensha_result = session.run("""
@@ -588,7 +591,7 @@ def fetch_all_shilei_rules() -> dict:
             shensha_name = record['shensha_name']
             weight = record['weight'] if record['weight'] is not None else 1.0
             if shilei_name not in result:
-                result[shilei_name] = {'leixiang': {}, 'leixiang_tj': {}, 'shensha': {}}
+                result[shilei_name] = {'leixiang': {}, 'shensha': {}}
             result[shilei_name]['shensha'][shensha_name] = weight
     
     driver.close()
@@ -724,16 +727,6 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
             '天将': benming_tianjiang_2,
         }
     
-    # 月将所乘天将
-    yuejiang = ke_data.get('yuejiang', '')
-    if yuejiang and isinstance(tianjiang_position, dict):
-        yuejiang_tianjiang = tianjiang_position.get(yuejiang, '')
-        if yuejiang_tianjiang:
-            positions['月将所乘天将'] = {
-                '地支': yuejiang,
-                '天将': yuejiang_tianjiang,
-            }
-    
     # 3. 从8008输出提取类象数据（按符号分类）
     leixiang_by_symbol = extract_leixiang_from_8008(ke_data.get('leixiang', {}))
     
@@ -768,8 +761,8 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         liuqin_keys = [k for k in pos_leixiang.keys() if k.startswith('LQ_')]
         changsheng_keys = [k for k in pos_leixiang.keys() if k.startswith('CS_')]
         
-        # 地支维度（月将所乘天将不计算地支）
-        if dizhi and pos_name != '月将所乘天将':
+        # 地支维度
+        if dizhi:
             dz_key = f'DZ_{dizhi}'
             dz_leixiang = pos_leixiang.get(dz_key, {})
             matched_items = {k: v * shilei_leixiang[k] for k, v in dz_leixiang.items() if k in shilei_leixiang}
@@ -823,9 +816,8 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
                     liuqin_name = lq_key[3:]
                     dim_details['六亲'] = {'symbol': liuqin_name, 'matched': False}
         
-        # 长生维度（从8008读取，月将所乘天将不计算长生）
-        if pos_name != '月将所乘天将':
-            for cs_key in changsheng_keys:
+        # 长生维度（从8008读取）
+        for cs_key in changsheng_keys:
                 cs_leixiang = pos_leixiang.get(cs_key, {})
                 matched_items = {k: v * shilei_leixiang[k] for k, v in cs_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
@@ -843,9 +835,9 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
                         changsheng_name = cs_key[3:]
                         dim_details['长生'] = {'symbol': changsheng_name, 'matched': False}
         
-        # 神煞维度（月将所乘天将不计算神煞）
+        # 神煞维度
         pos_shensha = set()
-        if pos_name != '月将所乘天将' and dizhi and dizhi in shensha_data:
+        if dizhi and dizhi in shensha_data:
             shensha_list = shensha_data[dizhi]
             pos_shensha = {s.get('name', '') for s in shensha_list if isinstance(s, dict)}
         
@@ -1006,16 +998,6 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             '地支': benming_dizhi_2,
             '天将': benming_tianjiang_2,
         }
-    
-    # 月将所乘天将
-    yuejiang = ke_data.get('yuejiang', '')
-    if yuejiang and isinstance(tianjiang_position, dict):
-        yuejiang_tianjiang = tianjiang_position.get(yuejiang, '')
-        if yuejiang_tianjiang:
-            positions['月将所乘天将'] = {
-                '地支': yuejiang,
-                '天将': yuejiang_tianjiang,
-            }
     
     # 3. 从8008输出提取类象数据（只做1次）
     leixiang_by_symbol = extract_leixiang_from_8008(ke_data.get('leixiang', {}))
@@ -1305,16 +1287,6 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             '天将': benming_tianjiang_2,
         }
     
-    # 月将所乘天将
-    yuejiang = ke_data.get('yuejiang', '')
-    if yuejiang and isinstance(tianjiang_position, dict):
-        yuejiang_tianjiang = tianjiang_position.get(yuejiang, '')
-        if yuejiang_tianjiang:
-            positions['月将所乘天将'] = {
-                '地支': yuejiang,
-                '天将': yuejiang_tianjiang,
-            }
-    
     # 3. 从8008输出提取类象数据（按符号分类）
     leixiang_by_symbol = extract_leixiang_from_8008(ke_data.get('leixiang', {}))
     
@@ -1329,8 +1301,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
     shilei_results = {}
     
     for shilei_name, rules in all_rules.items():
-        shilei_leixiang = rules['leixiang']
-        shilei_leixiang_tj = rules.get('leixiang_tj', {})  # 天将专属权重
+        shilei_leixiang = rules['leixiang']  # 现在是按维度分组的
         shilei_shensha = rules['shensha']
         total_score = 0.0
         pos_scores = {}
@@ -1357,11 +1328,13 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             if dizhi:
                 dz_key = f'DZ_{dizhi}'
                 dz_leixiang = pos_leixiang.get(dz_key, {})
+                # 从地支维度读取权重
+                dizhi_weights = shilei_leixiang.get('dizhi', {})
                 # 找出匹配的类象及其权重（含事类关联权重）
                 matched_items = []
                 for lx_name, weight in dz_leixiang.items():
-                    if lx_name in shilei_leixiang:
-                        shilei_weight = shilei_leixiang[lx_name]
+                    if lx_name in dizhi_weights:
+                        shilei_weight = dizhi_weights[lx_name]
                         matched_items.append((lx_name, weight, shilei_weight))
                 # 分离一维和多维
                 one_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w == 1]
@@ -1370,14 +1343,14 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 total_weight = 0.0
                 if one_dim_items:
                     max_sw = max(sw for _, _, sw in one_dim_items)
-                    total_weight += max_sw
+                    total_weight += max_sw  # 一维类象的维度倍数是1，所以直接加事类权重
                 for _, w, sw in multi_dim_items:
-                    total_weight += w * sw
+                    total_weight += w * sw  # 多维类象：维度倍数 × 事类权重
                 # 格式化输出
                 matched_str = []
                 for lx_name, weight, shilei_weight in matched_items:
                     if shilei_weight != 1:
-                        matched_str.append(f"{lx_name}×{shilei_weight}")
+                        matched_str.append(f"{lx_name}×{shilei_weight:.1f}")
                     elif weight > 1:
                         matched_str.append(f"{lx_name}×{weight}")
                     else:
@@ -1392,16 +1365,13 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             if tianjiang:
                 tj_key = f'TJ_{tianjiang}'
                 tj_leixiang = pos_leixiang.get(tj_key, {})
+                # 从天将维度读取权重
+                tianjiang_weights = shilei_leixiang.get('tianjiang', {})
                 matched_items = []
                 for lx_name, weight in tj_leixiang.items():
-                    # 优先查天将专属权重
-                    if lx_name in shilei_leixiang_tj and tianjiang in shilei_leixiang_tj[lx_name]:
-                        shilei_weight = shilei_leixiang_tj[lx_name][tianjiang]
-                    elif lx_name in shilei_leixiang:
-                        shilei_weight = shilei_leixiang[lx_name]
-                    else:
-                        continue  # 两个都没有，不匹配
-                    matched_items.append((lx_name, weight, shilei_weight))
+                    if lx_name in tianjiang_weights:
+                        shilei_weight = tianjiang_weights[lx_name]
+                        matched_items.append((lx_name, weight, shilei_weight))
                 one_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w == 1]
                 multi_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w > 1]
                 total_weight = 0.0
@@ -1413,7 +1383,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 matched_str = []
                 for lx_name, weight, shilei_weight in matched_items:
                     if shilei_weight != 1:
-                        matched_str.append(f"{lx_name}×{shilei_weight}")
+                        matched_str.append(f"{lx_name}×{shilei_weight:.1f}")
                     elif weight > 1:
                         matched_str.append(f"{lx_name}×{weight}")
                     else:
@@ -1427,10 +1397,12 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             # 地支六亲维度（从8008读取）
             for lq_key in liuqin_dz_keys:
                 lq_leixiang = pos_leixiang.get(lq_key, {})
+                # 从六亲维度读取权重
+                liuqin_weights = shilei_leixiang.get('liuqin', {})
                 matched_items = []
                 for lx_name, weight in lq_leixiang.items():
-                    if lx_name in shilei_leixiang:
-                        shilei_weight = shilei_leixiang[lx_name]
+                    if lx_name in liuqin_weights:
+                        shilei_weight = liuqin_weights[lx_name]
                         matched_items.append((lx_name, weight, shilei_weight))
                 one_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w == 1]
                 multi_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w > 1]
@@ -1443,7 +1415,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 matched_str = []
                 for lx_name, weight, shilei_weight in matched_items:
                     if shilei_weight != 1:
-                        matched_str.append(f"{lx_name}×{shilei_weight}")
+                        matched_str.append(f"{lx_name}×{shilei_weight:.1f}")
                     elif weight > 1:
                         matched_str.append(f"{lx_name}×{weight}")
                     else:
@@ -1458,10 +1430,12 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             # 遁干六亲维度（从8008读取）
             for lq_key in liuqin_dun_keys:
                 lq_leixiang = pos_leixiang.get(lq_key, {})
+                # 从六亲维度读取权重（遁干六亲和地支六亲共用同一个权重表）
+                liuqin_weights = shilei_leixiang.get('liuqin', {})
                 matched_items = []
                 for lx_name, weight in lq_leixiang.items():
-                    if lx_name in shilei_leixiang:
-                        shilei_weight = shilei_leixiang[lx_name]
+                    if lx_name in liuqin_weights:
+                        shilei_weight = liuqin_weights[lx_name]
                         matched_items.append((lx_name, weight, shilei_weight))
                 one_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w == 1]
                 multi_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w > 1]
@@ -1474,7 +1448,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 matched_str = []
                 for lx_name, weight, shilei_weight in matched_items:
                     if shilei_weight != 1:
-                        matched_str.append(f"{lx_name}×{shilei_weight}")
+                        matched_str.append(f"{lx_name}×{shilei_weight:.1f}")
                     elif weight > 1:
                         matched_str.append(f"{lx_name}×{weight}")
                     else:
@@ -1489,10 +1463,12 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             # 长生维度（从8008读取）
             for cs_key in changsheng_keys:
                 cs_leixiang = pos_leixiang.get(cs_key, {})
+                # 从长生维度读取权重
+                changsheng_weights = shilei_leixiang.get('changsheng', {})
                 matched_items = []
                 for lx_name, weight in cs_leixiang.items():
-                    if lx_name in shilei_leixiang:
-                        shilei_weight = shilei_leixiang[lx_name]
+                    if lx_name in changsheng_weights:
+                        shilei_weight = changsheng_weights[lx_name]
                         matched_items.append((lx_name, weight, shilei_weight))
                 one_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w == 1]
                 multi_dim_items = [(lx, w, sw) for lx, w, sw in matched_items if w > 1]
@@ -1505,7 +1481,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 matched_str = []
                 for lx_name, weight, shilei_weight in matched_items:
                     if shilei_weight != 1:
-                        matched_str.append(f"{lx_name}×{shilei_weight}")
+                        matched_str.append(f"{lx_name}×{shilei_weight:.1f}")
                     elif weight > 1:
                         matched_str.append(f"{lx_name}×{weight}")
                     else:
@@ -1533,18 +1509,19 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 shensha_weighted_score *= juji_multiplier
             
             dim_details['神煞'] = {
-                'matched': [f"{name}×{shilei_shensha[name]}" if shilei_shensha[name] != 1 else name for name in shensha_intersection]
+                'matched': [f"{name}×{shilei_shensha[name]:.1f}" if shilei_shensha[name] != 1 else name for name in shensha_intersection]
             }
             dim_matches['神煞'] = shensha_weighted_score
             
             # 计算加权分数
             score_info = calculate_weighted_score(dim_matches, shilei_name=shilei_name)
             
-            # 为每个维度添加得分
+            # 为每个维度添加得分（应用事类关联权重）
             for dim_name in dim_details:
-                weight = WEIGHT_CONFIG.get(dim_name, 1.0)
-                match_count = dim_matches.get(dim_name, 0)
-                dim_details[dim_name]['score'] = round(match_count * weight, 2)
+                dim_weight = WEIGHT_CONFIG.get(dim_name, 1.0)
+                weighted_match = dim_matches.get(dim_name, 0)
+                # weighted_match 已经包含事类关联权重，再乘以维度权重
+                dim_details[dim_name]['score'] = round(weighted_match * dim_weight, 1)
             
             if score_info['score'] > 0:
                 pos_scores[pos_name] = {
@@ -1557,7 +1534,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
         
         if total_score > 0:
             shilei_results[shilei_name] = {
-                'total_score': round(total_score, 2),
+                'total_score': round(total_score, 1),
                 'positions': pos_scores
             }
     
