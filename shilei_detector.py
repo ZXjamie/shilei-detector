@@ -33,93 +33,12 @@ COMBINATION_RATIO_BY_SHILEI = {}
 # key: 事类名, value: 系数（0表示无聚集效应）
 JUJI_CONFIG = {}
 
-# 符号触达权重（从 Neo4j 动态计算）
-# key: (事类名, 维度名), value: 权重
-# 维度名: '地支', '天将', '神煞'
-# 计算逻辑: 维度上限 / 本事类一维类象触达的符号数
-SYMBOL_REACH_WEIGHT = {}
-
-# 三个维度的符号上限
-SYMBOL_REACH_LIMIT = {
-    'dizhi': 12,    # 12地支
-    'tianjiang': 12, # 12天将
-    'shensha': 25,   # 25神煞（当前最大值）
-}
-
 # 维度名映射（代码内部用拼音，显示用中文）
 DIM_NAME_MAP = {
     'dizhi': '地支',
     'tianjiang': '天将',
     'shensha': '神煞',
 }
-
-
-def load_symbol_reach_weight():
-    """计算符号触达权重（细颗粒度）
-    
-    逻辑：
-    1. 统计每个事类在每个维度的一维类象触达数（去重）
-    2. 权重 = 维度上限 / 触达数
-    3. 触达数为0时跳过（无权重）
-    
-    三个维度：
-    - 地支：上限12
-    - 天将：上限12
-    - 神煞：上限25
-    """
-    global SYMBOL_REACH_WEIGHT
-    SYMBOL_REACH_WEIGHT = {}
-    
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-    
-    with driver.session() as session:
-        # 地支维度：统计一维类象触达的地支数
-        result = session.run("""
-            MATCH (s:事类)-[r:关联类象]->(l:Leixiang)
-            WHERE r.维度 = "dizhi"
-            MATCH (dz:DiZhi)-[r2:具有类象]->(l)
-            WHERE r2.附加条件 IS NULL OR r2.附加条件 = ""
-            WITH s.name AS shilei, count(DISTINCT dz) AS cnt
-            RETURN shilei, cnt
-        """)
-        for record in result:
-            shilei = record['shilei']
-            cnt = record['cnt']
-            if cnt > 0:
-                weight = SYMBOL_REACH_LIMIT['dizhi'] / cnt
-                SYMBOL_REACH_WEIGHT[(shilei, 'dizhi')] = weight
-        
-        # 天将维度：统计一维类象触达的天将数
-        result = session.run("""
-            MATCH (s:事类)-[r:关联类象]->(l:Leixiang)
-            WHERE r.维度 = "tianjiang"
-            MATCH (tj:Tianjiang)-[r2:具有类象]->(l)
-            WHERE r2.附加条件 IS NULL OR r2.附加条件 = ""
-            WITH s.name AS shilei, count(DISTINCT tj) AS cnt
-            RETURN shilei, cnt
-        """)
-        for record in result:
-            shilei = record['shilei']
-            cnt = record['cnt']
-            if cnt > 0:
-                weight = SYMBOL_REACH_LIMIT['tianjiang'] / cnt
-                SYMBOL_REACH_WEIGHT[(shilei, 'tianjiang')] = weight
-        
-        # 神煞维度：统计关联的神煞数（神煞都是一维）
-        result = session.run("""
-            MATCH (s:事类)-[:关联神煞]->(ss:Shensha)
-            WITH s.name AS shilei, count(DISTINCT ss) AS cnt
-            RETURN shilei, cnt
-        """)
-        for record in result:
-            shilei = record['shilei']
-            cnt = record['cnt']
-            if cnt > 0:
-                weight = SYMBOL_REACH_LIMIT['shensha'] / cnt
-                SYMBOL_REACH_WEIGHT[(shilei, 'shensha')] = weight
-    
-    driver.close()
-    print(f"[符号触达权重] 已计算 {len(SYMBOL_REACH_WEIGHT)} 条")
 
 
 def load_weight_config():
@@ -191,9 +110,6 @@ def load_weight_config():
     
     driver.close()
     print(f"[权重配置] 已加载: 维度权重={WEIGHT_CONFIG}, 位置权重={POSITION_WEIGHT}, 2维组合={len(COMBINATION_RATIO)}个, 聚集系数={JUJI_CONFIG}")
-    
-    # 计算符号触达权重（细颗粒度）
-    load_symbol_reach_weight()
 
 
 def get_combination_ratio(dims: set, shilei_name: str = None) -> float:
@@ -1438,7 +1354,6 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             # 计算每个维度的匹配明细
             dim_details = {}
             dim_matches = {}  # 用于计算分数
-            dim_base_counts = {}  # 纯匹配量（用于符号触达加法项）
             
             # 地支维度
             if dizhi:
@@ -1476,7 +1391,6 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     'matched': matched_str
                 }
                 dim_matches['地支'] = total_weight
-                dim_base_counts['地支'] = (1 if one_dim_items else 0) + sum(w for _, w, _ in multi_dim_items)
             
             # 天将维度
             if tianjiang:
@@ -1510,7 +1424,6 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     'matched': matched_str
                 }
                 dim_matches['天将'] = total_weight
-                dim_base_counts['天将'] = (1 if one_dim_items else 0) + sum(w for _, w, _ in multi_dim_items)
             
             # 地支六亲维度（从8008读取）
             for lq_key in liuqin_dz_keys:
@@ -1544,7 +1457,6 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     'matched': matched_str
                 }
                 dim_matches['地支六亲'] = total_weight
-                dim_base_counts['地支六亲'] = (1 if one_dim_items else 0) + sum(w for _, w, _ in multi_dim_items)
             
             # 遁干六亲维度（从8008读取）
             for lq_key in liuqin_dun_keys:
@@ -1578,7 +1490,6 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     'matched': matched_str
                 }
                 dim_matches['遁干六亲'] = total_weight
-                dim_base_counts['遁干六亲'] = (1 if one_dim_items else 0) + sum(w for _, w, _ in multi_dim_items)
             
             # 长生维度（从8008读取）
             for cs_key in changsheng_keys:
@@ -1612,7 +1523,6 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     'matched': matched_str
                 }
                 dim_matches['长生'] = total_weight
-                dim_base_counts['长生'] = (1 if one_dim_items else 0) + sum(w for _, w, _ in multi_dim_items)
             
             # 神煞维度（含事类关联权重）
             pos_shensha = set()
@@ -1633,16 +1543,6 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 'matched': [f"{name}×{shilei_shensha[name]:.1f}" if shilei_shensha[name] != 1 else name for name in shensha_intersection]
             }
             dim_matches['神煞'] = shensha_weighted_score
-            dim_base_counts['神煞'] = len(shensha_intersection)
-            
-            # 应用符号触达权重（细颗粒度）——加法结构
-            # 维度得分 = 维度关系贡献 + (纯匹配量 × 符号触达权重)
-            dim_to_reach_key = {'地支': 'dizhi', '天将': 'tianjiang', '神煞': 'shensha'}
-            for dim_name, reach_key in dim_to_reach_key.items():
-                if dim_name in dim_matches:
-                    reach_weight = SYMBOL_REACH_WEIGHT.get((shilei_name, reach_key), 1.0)
-                    base_cnt = dim_base_counts.get(dim_name, 0)
-                    dim_matches[dim_name] += base_cnt * reach_weight
             
             # 计算加权分数
             score_info = calculate_weighted_score(dim_matches, shilei_name=shilei_name)
