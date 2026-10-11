@@ -126,6 +126,13 @@ def load_weight_config():
     """从 Neo4j 加载权重配置到内存"""
     global WEIGHT_CONFIG, COMBINATION_RATIO, COMBINATION_RATIO_BY_SHILEI, JUJI_CONFIG, POSITION_WEIGHT
     
+    # 重置所有缓存（防止 Neo4j 中已删除的配置在内存中残留）
+    WEIGHT_CONFIG = {}
+    COMBINATION_RATIO = {}
+    COMBINATION_RATIO_BY_SHILEI = {}
+    JUJI_CONFIG = {}
+    POSITION_WEIGHT = {}
+    
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     
     with driver.session() as session:
@@ -1431,6 +1438,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             # 计算每个维度的匹配明细
             dim_details = {}
             dim_matches = {}  # 用于计算分数
+            dim_base_counts = {}  # 纯匹配量（用于符号触达加法项）
             
             # 地支维度
             if dizhi:
@@ -1468,6 +1476,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     'matched': matched_str
                 }
                 dim_matches['地支'] = total_weight
+                dim_base_counts['地支'] = (1 if one_dim_items else 0) + sum(w for _, w, _ in multi_dim_items)
             
             # 天将维度
             if tianjiang:
@@ -1501,6 +1510,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     'matched': matched_str
                 }
                 dim_matches['天将'] = total_weight
+                dim_base_counts['天将'] = (1 if one_dim_items else 0) + sum(w for _, w, _ in multi_dim_items)
             
             # 地支六亲维度（从8008读取）
             for lq_key in liuqin_dz_keys:
@@ -1534,6 +1544,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     'matched': matched_str
                 }
                 dim_matches['地支六亲'] = total_weight
+                dim_base_counts['地支六亲'] = (1 if one_dim_items else 0) + sum(w for _, w, _ in multi_dim_items)
             
             # 遁干六亲维度（从8008读取）
             for lq_key in liuqin_dun_keys:
@@ -1567,6 +1578,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     'matched': matched_str
                 }
                 dim_matches['遁干六亲'] = total_weight
+                dim_base_counts['遁干六亲'] = (1 if one_dim_items else 0) + sum(w for _, w, _ in multi_dim_items)
             
             # 长生维度（从8008读取）
             for cs_key in changsheng_keys:
@@ -1600,6 +1612,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     'matched': matched_str
                 }
                 dim_matches['长生'] = total_weight
+                dim_base_counts['长生'] = (1 if one_dim_items else 0) + sum(w for _, w, _ in multi_dim_items)
             
             # 神煞维度（含事类关联权重）
             pos_shensha = set()
@@ -1620,14 +1633,16 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 'matched': [f"{name}×{shilei_shensha[name]:.1f}" if shilei_shensha[name] != 1 else name for name in shensha_intersection]
             }
             dim_matches['神煞'] = shensha_weighted_score
+            dim_base_counts['神煞'] = len(shensha_intersection)
             
-            # 应用符号触达权重（细颗粒度）
-            # 将维度匹配分乘以符号触达权重
+            # 应用符号触达权重（细颗粒度）——加法结构
+            # 维度得分 = 维度关系贡献 + (纯匹配量 × 符号触达权重)
             dim_to_reach_key = {'地支': 'dizhi', '天将': 'tianjiang', '神煞': 'shensha'}
             for dim_name, reach_key in dim_to_reach_key.items():
                 if dim_name in dim_matches:
                     reach_weight = SYMBOL_REACH_WEIGHT.get((shilei_name, reach_key), 1.0)
-                    dim_matches[dim_name] *= reach_weight
+                    base_cnt = dim_base_counts.get(dim_name, 0)
+                    dim_matches[dim_name] += base_cnt * reach_weight
             
             # 计算加权分数
             score_info = calculate_weighted_score(dim_matches, shilei_name=shilei_name)
