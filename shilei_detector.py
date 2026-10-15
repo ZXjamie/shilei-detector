@@ -33,6 +33,19 @@ COMBINATION_RATIO_BY_SHILEI = {}
 # key: 事类名, value: 系数（0表示无聚集效应）
 JUJI_CONFIG = {}
 
+# 高维组合比例（3/4/5/6维，从 Neo4j 加载）
+# key: frozenset(['维度1', '维度2', ...]), value: 比例
+COMBINATION_RATIO_3D = {}
+COMBINATION_RATIO_4D = {}
+COMBINATION_RATIO_5D = {}
+COMBINATION_RATIO_6D = {}
+
+# 事类专属高维组合比例
+COMBINATION_RATIO_3D_BY_SHILEI = {}
+COMBINATION_RATIO_4D_BY_SHILEI = {}
+COMBINATION_RATIO_5D_BY_SHILEI = {}
+COMBINATION_RATIO_6D_BY_SHILEI = {}
+
 # 维度名映射（代码内部用拼音，显示用中文）
 DIM_NAME_MAP = {
     'dizhi': '地支',
@@ -44,6 +57,8 @@ DIM_NAME_MAP = {
 def load_weight_config():
     """从 Neo4j 加载权重配置到内存"""
     global WEIGHT_CONFIG, COMBINATION_RATIO, COMBINATION_RATIO_BY_SHILEI, JUJI_CONFIG, POSITION_WEIGHT
+    global COMBINATION_RATIO_3D, COMBINATION_RATIO_4D, COMBINATION_RATIO_5D, COMBINATION_RATIO_6D
+    global COMBINATION_RATIO_3D_BY_SHILEI, COMBINATION_RATIO_4D_BY_SHILEI, COMBINATION_RATIO_5D_BY_SHILEI, COMBINATION_RATIO_6D_BY_SHILEI
     
     # 重置所有缓存（防止 Neo4j 中已删除的配置在内存中残留）
     WEIGHT_CONFIG = {}
@@ -51,6 +66,14 @@ def load_weight_config():
     COMBINATION_RATIO_BY_SHILEI = {}
     JUJI_CONFIG = {}
     POSITION_WEIGHT = {}
+    COMBINATION_RATIO_3D = {}
+    COMBINATION_RATIO_4D = {}
+    COMBINATION_RATIO_5D = {}
+    COMBINATION_RATIO_6D = {}
+    COMBINATION_RATIO_3D_BY_SHILEI = {}
+    COMBINATION_RATIO_4D_BY_SHILEI = {}
+    COMBINATION_RATIO_5D_BY_SHILEI = {}
+    COMBINATION_RATIO_6D_BY_SHILEI = {}
     
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     
@@ -96,6 +119,78 @@ def load_weight_config():
             ratio = record['ratio']
             if shilei and ratio is not None:
                 JUJI_CONFIG[shilei] = float(ratio)
+        
+        # 加载3维组合比例
+        result = session.run("""
+            MATCH (c:三维组合比例)
+            RETURN c.事类 AS shilei, c.组合 AS combo, c.比例 AS ratio
+        """)
+        for record in result:
+            shilei = record.get('shilei')
+            combo = record['combo']
+            ratio = record['ratio']
+            if combo and ratio is not None:
+                if isinstance(combo, list) and len(combo) == 3:
+                    if shilei:
+                        if shilei not in COMBINATION_RATIO_3D_BY_SHILEI:
+                            COMBINATION_RATIO_3D_BY_SHILEI[shilei] = {}
+                        COMBINATION_RATIO_3D_BY_SHILEI[shilei][frozenset(combo)] = float(ratio)
+                    else:
+                        COMBINATION_RATIO_3D[frozenset(combo)] = float(ratio)
+        
+        # 加载4维组合比例
+        result = session.run("""
+            MATCH (c:四维组合比例)
+            RETURN c.事类 AS shilei, c.组合 AS combo, c.比例 AS ratio
+        """)
+        for record in result:
+            shilei = record.get('shilei')
+            combo = record['combo']
+            ratio = record['ratio']
+            if combo and ratio is not None:
+                if isinstance(combo, list) and len(combo) == 4:
+                    if shilei:
+                        if shilei not in COMBINATION_RATIO_4D_BY_SHILEI:
+                            COMBINATION_RATIO_4D_BY_SHILEI[shilei] = {}
+                        COMBINATION_RATIO_4D_BY_SHILEI[shilei][frozenset(combo)] = float(ratio)
+                    else:
+                        COMBINATION_RATIO_4D[frozenset(combo)] = float(ratio)
+        
+        # 加载5维组合比例
+        result = session.run("""
+            MATCH (c:五维组合比例)
+            RETURN c.事类 AS shilei, c.组合 AS combo, c.比例 AS ratio
+        """)
+        for record in result:
+            shilei = record.get('shilei')
+            combo = record['combo']
+            ratio = record['ratio']
+            if combo and ratio is not None:
+                if isinstance(combo, list) and len(combo) == 5:
+                    if shilei:
+                        if shilei not in COMBINATION_RATIO_5D_BY_SHILEI:
+                            COMBINATION_RATIO_5D_BY_SHILEI[shilei] = {}
+                        COMBINATION_RATIO_5D_BY_SHILEI[shilei][frozenset(combo)] = float(ratio)
+                    else:
+                        COMBINATION_RATIO_5D[frozenset(combo)] = float(ratio)
+        
+        # 加载6维组合比例
+        result = session.run("""
+            MATCH (c:六维组合比例)
+            RETURN c.事类 AS shilei, c.组合 AS combo, c.比例 AS ratio
+        """)
+        for record in result:
+            shilei = record.get('shilei')
+            combo = record['combo']
+            ratio = record['ratio']
+            if combo and ratio is not None:
+                if isinstance(combo, list) and len(combo) == 6:
+                    if shilei:
+                        if shilei not in COMBINATION_RATIO_6D_BY_SHILEI:
+                            COMBINATION_RATIO_6D_BY_SHILEI[shilei] = {}
+                        COMBINATION_RATIO_6D_BY_SHILEI[shilei][frozenset(combo)] = float(ratio)
+                    else:
+                        COMBINATION_RATIO_6D[frozenset(combo)] = float(ratio)
     
         # 加载位置权重（键为位置类型名；男/女位置共用）
         result = session.run("""
@@ -109,14 +204,14 @@ def load_weight_config():
                 POSITION_WEIGHT[name] = float(weight)
     
     driver.close()
-    print(f"[权重配置] 已加载: 维度权重={WEIGHT_CONFIG}, 位置权重={POSITION_WEIGHT}, 2维组合={len(COMBINATION_RATIO)}个, 聚集系数={JUJI_CONFIG}")
+    print(f"[权重配置] 已加载: 维度权重={WEIGHT_CONFIG}, 位置权重={POSITION_WEIGHT}, 2维组合={len(COMBINATION_RATIO)}个, 3维={len(COMBINATION_RATIO_3D)}个, 4维={len(COMBINATION_RATIO_4D)}个, 5维={len(COMBINATION_RATIO_5D)}个, 6维={len(COMBINATION_RATIO_6D)}个, 聚集系数={JUJI_CONFIG}")
 
 
 def get_combination_ratio(dims: set, shilei_name: str = None) -> float:
     """获取多维组合的比例
     
     2维：直接查表（优先事类专属，fallback到全局）
-    3维及以上：涉及的所有2维组合比例的求和（优先事类专属，fallback到全局）
+    3维及以上：优先查对应维度的独立节点，没有则fallback到2维子对求和
     """
     dims_list = list(dims)
     if len(dims_list) < 2:
@@ -125,19 +220,45 @@ def get_combination_ratio(dims: set, shilei_name: str = None) -> float:
     # 获取事类专属或全局的组合比例表
     shilei_ratios = COMBINATION_RATIO_BY_SHILEI.get(shilei_name, {}) if shilei_name else {}
     
-    def _get_ratio(combo_key):
-        """优先查事类专属，fallback到全局"""
+    def _get_ratio_2d(combo_key):
+        """优先查事类专属，fallback到全局（2维用）"""
         return shilei_ratios.get(combo_key, COMBINATION_RATIO.get(combo_key, 0.0))
     
     if len(dims_list) == 2:
-        return _get_ratio(frozenset(dims_list))
+        return _get_ratio_2d(frozenset(dims_list))
     
-    # 3维及以上：计算所有2维子组合的比例求和
-    total_ratio = 0.0
-    for combo in combinations(dims_list, 2):
-        total_ratio += _get_ratio(frozenset(combo))
+    # 3维及以上：优先查对应维度的独立节点
+    dim_count = len(dims_list)
+    dim_key = frozenset(dims_list)
     
-    return total_ratio
+    # 选择对应维度的全局表和事类专属表
+    if dim_count == 3:
+        global_table = COMBINATION_RATIO_3D
+        shilei_table = COMBINATION_RATIO_3D_BY_SHILEI.get(shilei_name, {}) if shilei_name else {}
+    elif dim_count == 4:
+        global_table = COMBINATION_RATIO_4D
+        shilei_table = COMBINATION_RATIO_4D_BY_SHILEI.get(shilei_name, {}) if shilei_name else {}
+    elif dim_count == 5:
+        global_table = COMBINATION_RATIO_5D
+        shilei_table = COMBINATION_RATIO_5D_BY_SHILEI.get(shilei_name, {}) if shilei_name else {}
+    elif dim_count == 6:
+        global_table = COMBINATION_RATIO_6D
+        shilei_table = COMBINATION_RATIO_6D_BY_SHILEI.get(shilei_name, {}) if shilei_name else {}
+    else:
+        global_table = {}
+        shilei_table = {}
+    
+    # 优先查事类专属高维节点，再查全局高维节点；节点存在即采用（含0值），都不存在则fallback到2维子对求和
+    if dim_key in shilei_table:
+        return shilei_table[dim_key]
+    elif dim_key in global_table:
+        return global_table[dim_key]
+    else:
+        # fallback: 2维子对求和
+        total_ratio = 0.0
+        for combo in combinations(dims_list, 2):
+            total_ratio += _get_ratio_2d(frozenset(combo))
+        return total_ratio
 
 
 def calculate_weighted_score(dim_matches: dict, shilei_name: str = None) -> dict:
