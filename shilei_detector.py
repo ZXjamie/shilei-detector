@@ -66,6 +66,15 @@ LS_SHARE_POW = 1.0   # 共享度指数：0=不加权，1=1/共享度，>1=更陡
 # 准验率 = 命中该组合且来意=该事类的课数 ÷ 命中该组合的课数，由 recalc_zhuanshu_rate.py 动态重算
 PEIWEI_EDGES = []
 
+# 双神煞配位边（同位口径）
+PEIWEI_PAIRS = []
+
+# 维度关系权重：{(事类, 维度): 权重}，来自 关联类象.r.权重
+DIM_REL_WEIGHT = {}
+# 神煞覆盖：{事类: 关联神煞条数}，神煞维度关系权重 = SHENSHA_MAX ÷ 覆盖
+SHENSHA_COVER = {}
+SHENSHA_MAX = 25
+
 # 同一乘关系的两侧类象映射（打分去重：同一事实不重复计分）
 COMBO_MAP = {}
 try:
@@ -380,7 +389,7 @@ TIANJIANG_FULL = {
 # 十二长生顺序
 CHANGSHENG_ORDER = ['长生', '沐浴', '冠带', '临官', '帝旺', '衰', '病', '死', '墓', '绝', '胎', '养']
 
-# 位置总数（位置覆盖率加权用：事类总分 = Σ位置得分 × 命中位置数 / 12）
+# 位置总数（仅用于统计展示；覆盖率缩放已废除，不再参与得分）
 POSITION_TOTAL = 12
 
 # 13处位置名（与8008输出对齐）
@@ -773,6 +782,12 @@ def fetch_all_shilei_rules() -> dict:
     """
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     
+    # 每次加载先复位，避免多次调用时覆盖数累加
+    global DIM_REL_WEIGHT, SHENSHA_COVER, SHENSHA_MAX
+    DIM_REL_WEIGHT = {}
+    SHENSHA_COVER = {}
+    SHENSHA_MAX = 25
+    
     result = {}
     with driver.session() as session:
         # 一次查询所有事类及其关联的类象（含权重和维度）
@@ -780,21 +795,27 @@ def fetch_all_shilei_rules() -> dict:
             MATCH (s:事类)-[r:关联类象]->(l:Leixiang)
             RETURN s.name AS shilei_name, l.name AS leixiang_name, coalesce(r.来意权重, r.权重) AS weight, r.维度 AS dim
         """)
+        # 维度只接受四个规范值；非法维度记录跳过并告警，不参与任何计分
+        _VALID_DIMS = {'dizhi', 'tianjiang', 'liuqin', 'changsheng'}
+        _bad_dim = []       # [(事类, 类象, 原始维度)]
+        _dim_conflict = []  # [((事类,维度), 首次值, 冲突值)]
         for record in leixiang_result:
             shilei_name = record['shilei_name']
             leixiang_name = record['leixiang_name']
             weight = record['weight'] if record['weight'] is not None else 1.0
-            _DIM_MAP = {'dizhi': 'dizhi', 'tianjiang': 'tianjiang', 'liuqin': 'liuqin',
-                        'changsheng': 'changsheng', '地支': 'dizhi', '天将': 'tianjiang',
-                        '六亲': 'liuqin', '长生': 'changsheng'}
-            dim = _DIM_MAP.get((record['dim'] or '').strip())  # None = 不限维度
+            dim = (record['dim'] or '').strip()
+            if dim not in _VALID_DIMS:
+                _bad_dim.append((shilei_name, leixiang_name, record['dim']))
+                continue
             if shilei_name not in result:
-                result[shilei_name] = {'leixiang': {}, 'leixiang_all': {}, 'shensha': {}}
-            result[shilei_name].setdefault('leixiang_all', {})
-            if dim:
-                result[shilei_name]['leixiang'].setdefault(dim, {})[leixiang_name] = weight
+                result[shilei_name] = {'leixiang': {}, 'shensha': {}}
+            result[shilei_name]['leixiang'].setdefault(dim, {})[leixiang_name] = weight
+            # 维度关系权重：同一 (事类, 维度) 内所有关联类象共用一份，首次写入为准
+            _key = (shilei_name, dim)
+            if _key in DIM_REL_WEIGHT and abs(DIM_REL_WEIGHT[_key] - weight) > 1e-9:
+                _dim_conflict.append((_key, DIM_REL_WEIGHT[_key], weight))
             else:
-                result[shilei_name]['leixiang_all'][leixiang_name] = weight
+                DIM_REL_WEIGHT.setdefault(_key, weight)
         
         # 一次查询所有事类及其关联的神煞（含权重）
         # 排除已是类神的神煞：类神走将军通道，避免与士兵通道重复计分
@@ -810,6 +831,13 @@ def fetch_all_shilei_rules() -> dict:
             if shilei_name not in result:
                 result[shilei_name] = {'leixiang': {}, 'shensha': {}}
             result[shilei_name]['shensha'][shensha_name] = weight
+
+        # 神煞覆盖数 = 该事类在该层的关联神煞条数（包括类神）
+        for record in session.run("""
+            MATCH (sh:事类)-[:关联神煞]->(ss:Shensha)
+            RETURN sh.name AS n, count(DISTINCT ss) AS cov
+        """):
+            SHENSHA_COVER[record['n']] = int(record['cov'])
 
         # 类神（将军）通道：事类直接关联的符号，不依赖类象条件
         # 顺序字段即等级：顺序1=将军（权重最高），顺序越大越接近士兵
@@ -881,7 +909,35 @@ def fetch_all_shilei_rules() -> dict:
                     'cc': cc,
                     'rate': float(record['rate']) if record['rate'] is not None else 0.0,
                 })
-        print(f"[配位边] 已加载 {len(PEIWEI_EDGES)} 条")
+        # 双神煞配位边（同位口径）
+        global PEIWEI_PAIRS
+        PEIWEI_PAIRS = []
+        for record in session.run("""
+            MATCH (a:Shensha)-[r:配位]->(b:Shensha)
+            RETURN a.name AS ma, b.name AS mb, r.conditions_code AS cc, r.准验率 AS rate
+        """):
+            if record['ma'] and record['mb']:
+                cc_str = record['cc'] or '{"type": "dual_tongwei"}'
+                try:
+                    cc = json.loads(cc_str) if isinstance(cc_str, str) else cc_str
+                except:
+                    cc = {"type": "dual_tongwei"}
+                PEIWEI_PAIRS.append({
+                    'ma': record['ma'], 'mb': record['mb'], 'cc': cc,
+                    'rate': float(record['rate']) if record['rate'] is not None else 0.0,
+                })
+
+        SHENSHA_MAX = max(SHENSHA_COVER.values()) if SHENSHA_COVER else 25
+        print(f"[维度关系权重] 已加载 {len(DIM_REL_WEIGHT)} 组 · 神煞覆盖上限 {SHENSHA_MAX} · 跳过非法维度 {len(_bad_dim)} 条 · 系数冲突 {len(_dim_conflict)} 个")
+        for _b in _bad_dim[:10]:
+            print(f"  ⚠️  非法维度已跳过: {_b[0]} → {_b[1]}  维度={_b[2]!r}")
+        if len(_bad_dim) > 10:
+            print(f"  ⚠️  其余 {len(_bad_dim)-10} 条省略")
+        for _c in _dim_conflict[:10]:
+            print(f"  ⚠️  系数冲突（保留首次值）: {_c[0]}  首次={_c[1]}  冲突值={_c[2]}")
+        if len(_dim_conflict) > 10:
+            print(f"  ⚠️  其余 {len(_dim_conflict)-10} 个省略")
+        print(f"[配位边] 已加载 {len(PEIWEI_EDGES)} 条单神煞 + {len(PEIWEI_PAIRS)} 条双神煞")
 
     driver.close()
     return result
@@ -927,6 +983,10 @@ def check_peiwei_conditions(cc: dict, dizhi: str, pos_shensha: set, ma: str, pos
         # 检查当前位置是否匹配目标位置，且带主符号
         return pos_name == target_pos_name and ma in pos_shensha
     
+    elif cc_type == 'dual_tongwei':
+        partner = cc.get('partner', '')
+        return bool(partner) and ma in pos_shensha and partner in pos_shensha
+
     # 未来扩展：其他条件类型
     # elif cc_type == 'tongwei_fujia':
     #     # 同位 + 附加符号
@@ -1922,122 +1982,86 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     return 1
                 def _dm(k):
                     return LS_DIM_MULT.get(k, 1.0)
-                _w = ls.get('dizhi', {}).get(dizhi)
-                if _w:
-                    ls_hits.append(f"{dizhi}(地支)"); ls_raw += _w / _share('dizhi', dizhi) * _dm('dizhi')
-                _w = ls.get('tianjiang', {}).get(tianjiang)
-                if _w:
-                    ls_hits.append(f"{tianjiang}(天将)"); ls_raw += _w / _share('tianjiang', tianjiang) * _dm('tianjiang')
+                # ── 类神通道三阶口径 ──
+                # ① 符号基础分 = 维度权重（地支3.0/天将1.0/六亲1.0或0.5/长生0.5/神煞1.0）
+                # ② 维度单价   = 维度权重 × 维度关系权重(事类,维度)
+                # ③ 类神分     = 维度单价 × Σ(1 + 准验率_i)，未命中配位则 ×1
+                # 类神边上的 r.权重 不参与计分（历史残留）。
+                def _dim_rel_wei(kind):
+                    if kind == 'shensha':
+                        _cov = SHENSHA_COVER.get(shilei_name, 0)
+                        return (SHENSHA_MAX / _cov) if _cov else 0.0
+                    if kind == 'changsheng':
+                        return 1.0
+                    return DIM_REL_WEIGHT.get((shilei_name, kind), 1.0)
+
+                def _unit_price(kind, dim_key):
+                    if kind == 'shensha' and not SHENSHA_COVER.get(shilei_name):
+                        return 0.0
+                    return WEIGHT_CONFIG.get(dim_key, 1.0) * _dim_rel_wei(kind)
+
+                ls_items = []   # [(kind, name, 单价, 显示标签)]
+                if ls.get('dizhi', {}).get(dizhi):
+                    ls_items.append(('dizhi', dizhi, _unit_price('dizhi', '地支'), f"{dizhi}(地支)"))
+                if ls.get('tianjiang', {}).get(tianjiang):
+                    ls_items.append(('tianjiang', tianjiang, _unit_price('tianjiang', '天将'), f"{tianjiang}(天将)"))
                 for _k in liuqin_dz_keys:
                     _n = _k[3:]
-                    _w = ls.get('liuqin', {}).get(_n)
-                    if _w:
-                        ls_hits.append(f"{_n}(六亲)"); ls_raw += _w / _share('liuqin', _n) * _dm('liuqin')
+                    if ls.get('liuqin', {}).get(_n):
+                        ls_items.append(('liuqin', _n, _unit_price('liuqin', '地支六亲'), f"{_n}(六亲)"))
                 for _k in liuqin_dun_keys:
                     _n = _k[7:]
-                    _w = ls.get('liuqin', {}).get(_n)
-                    if _w:
-                        ls_hits.append(f"{_n}(遁干六亲)"); ls_raw += _w / _share('liuqin', _n) * _dm('liuqin')
+                    if ls.get('liuqin', {}).get(_n):
+                        ls_items.append(('liuqin', _n, _unit_price('liuqin', '遁干六亲'), f"{_n}(遁干六亲)"))
                 for _k in changsheng_keys:
                     _n = _k[3:]
-                    _w = ls.get('changsheng', {}).get(_n)
-                    if _w:
-                        ls_hits.append(f"{_n}(长生)"); ls_raw += _w / _share('changsheng', _n) * _dm('changsheng')
-                # 类神神煞必须用「该位置的全部神煞」判定（pos_shensha），
-                # 不能用 shensha_intersection（它已排除类神，会导致类神神煞永远匹配不到）
-                
-                # 第一步：检查每个神煞是否命中了配位
-                peiwei_matched_shensha = set()  # 命中配位的神煞
-                peiwei_matched_dizhi = set()    # 命中配位的地支
-                
-                for edge in PEIWEI_EDGES:
-                    _ma = edge['ma']
-                    _dz = edge['dz']
-                    _cc = edge['cc']
-                    _rate = edge['rate']
-                    
-                    if _rate <= 0:
-                        continue
-                    
-                    # 根据 conditions_code 类型判断
-                    _cc_type = _cc.get('type', 'tongwei')
-                    
-                    if _cc_type == 'tongwei':
-                        # 同位类型：检查地支匹配
-                        if _dz != dizhi:
-                            continue
-                    # position_shensha 类型不需要地支匹配检查
-                    
-                    # 调用解析器判断条件
-                    if not check_peiwei_conditions(_cc, _dz, pos_shensha, _ma, pos_name):
-                        continue
-                    
-                    # 命中配位，记录
-                    peiwei_matched_shensha.add(_ma)
-                    if _cc_type == 'tongwei':
-                        peiwei_matched_dizhi.add(_dz)
-                
-                # 第二步：计算类神贡献
+                    if ls.get('changsheng', {}).get(_n):
+                        ls_items.append(('changsheng', _n, _unit_price('changsheng', '长生'), f"{_n}(长生)"))
                 for _s in pos_shensha:
-                    _w = ls.get('shensha', {}).get(_s)
-                    if _w:
-                        if _s in peiwei_matched_shensha:
-                            # 命中配位，不加基础贡献（配位加成里已包含）
-                            pass
-                        else:
-                            # 没有命中配位，加基础贡献
-                            ls_hits.append(f"{_s}(神煞)")
-                            ls_raw += _w / _share('shensha', _s) * _dm('shensha')
-                
-                # 第三步：计算配位加成
+                    if ls.get('shensha', {}).get(_s):
+                        ls_items.append(('shensha', _s, _unit_price('shensha', '神煞'), f"{_s}(神煞)"))
+                matched_rates = {}   # {(kind, name): [准验率, ...]}
+                matched_hits = []
+
                 for edge in PEIWEI_EDGES:
-                    _ma = edge['ma']
-                    _dz = edge['dz']
-                    _cc = edge['cc']
-                    _rate = edge['rate']
-                    
+                    _ma, _dz, _cc, _rate = edge['ma'], edge['dz'], edge['cc'], edge['rate']
                     if _rate <= 0:
                         continue
-                    
-                    # 根据 conditions_code 类型判断
                     _cc_type = _cc.get('type', 'tongwei')
-                    
-                    if _cc_type == 'tongwei':
-                        # 同位类型：检查地支匹配
-                        if _dz != dizhi:
-                            continue
-                    # position_shensha 类型不需要地支匹配检查
-                    
-                    # 调用解析器判断条件
+                    if _cc_type == 'tongwei' and _dz != dizhi:
+                        continue
                     if not check_peiwei_conditions(_cc, _dz, pos_shensha, _ma, pos_name):
                         continue
-                    
-                    _mw = ls.get('shensha', {}).get(_ma)
-                    # 对于 position_shensha 类型，_dz 是位置名，不是地支，所以 _dw 为 0
-                    _dw = ls.get('dizhi', {}).get(_dz, 0) if _cc_type == 'tongwei' else 0
-                    
-                    # 每个配位条件满足时，独立计算贡献并累加
-                    if _mw:
-                        # 神煞的配位加成：贡献 × (1+准验率)
-                        _ma_contribution = _mw / _share('shensha', _ma) * _dm('shensha') * (1 + _rate)
-                        ls_raw += _ma_contribution
-                        
-                        # 如果是tongwei类型，地支也有配位加成
-                        if _cc_type == 'tongwei' and _dw:
-                            if _dz in peiwei_matched_dizhi:
-                                # 地支命中配位，不加基础贡献（配位加成里已包含）
-                                pass
-                            else:
-                                # 地支没有命中配位，加基础贡献
-                                ls_hits.append(f"{_dz}(地支)")
-                                ls_raw += _dw / _share('dizhi', _dz) * _dm('dizhi')
-                            
-                            _dz_contribution = _dw / _share('dizhi', _dz) * _dm('dizhi') * (1 + _rate)
-                            ls_raw += _dz_contribution
-                        
-                        ls_hits.append(f"配位:{_ma}见{_dz}(×{1+_rate:.3f})")
+                    matched_rates.setdefault(('shensha', _ma), []).append(_rate)
+                    if _cc_type == 'tongwei':
+                        matched_rates.setdefault(('dizhi', _dz), []).append(_rate)
+                    matched_hits.append(f"配位:{_ma}见{_dz}(×{1+_rate:.3f})")
 
-            ls_weight = WEIGHT_CONFIG.get('类神', 10.0) * LS_SHILEI_MULT.get(shilei_name, 1.0)
+                for pair in PEIWEI_PAIRS:
+                    _pa, _pb, _prate = pair['ma'], pair['mb'], pair['rate']
+                    if _prate <= 0:
+                        continue
+                    if not check_peiwei_conditions(pair['cc'], dizhi, pos_shensha, _pa, pos_name):
+                        continue
+                    for _ps in (_pa, _pb):
+                        matched_rates.setdefault(('shensha', _ps), []).append(_prate)
+                    matched_hits.append(f"配位:{_pa}同{_pb}(×{1+_prate:.3f})")
+
+                # 入账：单价 × Σ(1+准验率)；未命中配位则 ×1
+                for _kind, _name, _price, _label in ls_items:
+                    if _price <= 0:
+                        continue
+                    _rs = matched_rates.get((_kind, _name), [])
+                    if _rs:
+                        _factor = sum(1 + r for r in _rs)
+                        ls_hits.append(f"{_label}×{_factor:.3f}")
+                    else:
+                        _factor = 1.0
+                        ls_hits.append(_label)
+                    ls_raw += _price * _factor
+                ls_hits.extend(matched_hits)
+
+            ls_weight = WEIGHT_CONFIG.get('类神', 1.0) * LS_SHILEI_MULT.get(shilei_name, 1.0)
             ls_score = round(ls_raw * ls_weight, 1)
             if ls_hits:
                 dim_details['类神'] = {
@@ -2066,7 +2090,9 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 ls_ch_total += ls_score
         
         hit = len({p.replace('_2', '') for p in pos_scores}) if pos_scores else 0
-        norm_total = (total_score * hit / POSITION_TOTAL) if total_score > 0 else 0.0
+        # 覆盖率已废除：各位置权重并不相同，用「命中位置类型数 ÷ 12」做统一缩放会偏颇粗糙。
+        # 总分只由位置得分求和得出，位置差异由位置权重表达。
+        norm_total = total_score if total_score > 0 else 0.0
         # 将军分：命中即得固定分，整课只算一次（"往那一站就是高分"，不随命中个数累加）
         if ls_all_hits and LS_FIXED_SCORE:
             norm_total += LS_FIXED_SCORE
