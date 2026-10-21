@@ -401,6 +401,17 @@ POSITION_NAMES = [
 ]
 
 
+def _bm_dz(bm):
+    """本命字段取地支，兼容两种存量格式
+
+    '癸巳'（完整干支）→ '巳'
+    '巳'（单字地支）  → '巳'
+    """
+    if not bm:
+        return ''
+    return bm[1] if len(bm) >= 2 else bm
+
+
 # [已禁用] 六亲和长生由类象检测器(8008)计算，8014只消费不重算
 # def calc_liuqin(ri_gan: str, dizhi: str) -> str:
 #     """计算地支相对于日干的六亲"""
@@ -1048,8 +1059,8 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
     
     # 本命上神（男方）
     benming_1 = ke_data.get('benming_1')
-    if benming_1 and len(benming_1) >= 2:
-        benming_dizhi = benming_1[1]  # 本命干支的地支部分
+    if _bm_dz(benming_1):
+        benming_dizhi = _bm_dz(benming_1)
         if tiandipan:
             benming_shangshen = tiandipan.get(benming_dizhi)
             if benming_shangshen:
@@ -1072,8 +1083,8 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
     
     # 本命上神_2（女方）
     benming_2 = ke_data.get('benming_2')
-    if benming_2 and len(benming_2) >= 2:
-        benming_dizhi_2 = benming_2[1]
+    if _bm_dz(benming_2):
+        benming_dizhi_2 = _bm_dz(benming_2)
         if tiandipan:
             benming_shangshen_2 = tiandipan.get(benming_dizhi_2)
             if benming_shangshen_2:
@@ -1110,8 +1121,8 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         }
     
     # 本命（男方）
-    if benming_1 and len(benming_1) >= 2:
-        benming_dizhi = benming_1[1]
+    if _bm_dz(benming_1):
+        benming_dizhi = _bm_dz(benming_1)
         benming_tianjiang = tianjiang_position.get(benming_dizhi, '') if isinstance(tianjiang_position, dict) else ''
         positions['本命'] = {
             '地支': benming_dizhi,
@@ -1120,8 +1131,8 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
     
     # 本命_2（女方）
     benming_2 = ke_data.get('benming_2')
-    if benming_2 and len(benming_2) >= 2:
-        benming_dizhi_2 = benming_2[1]
+    if _bm_dz(benming_2):
+        benming_dizhi_2 = _bm_dz(benming_2)
         benming_tianjiang_2 = tianjiang_position.get(benming_dizhi_2, '') if isinstance(tianjiang_position, dict) else ''
         positions['本命_2'] = {
             '地支': benming_dizhi_2,
@@ -1325,8 +1336,8 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
     
     # 本命上神（男方）
     benming_1 = ke_data.get('benming_1')
-    if benming_1 and len(benming_1) >= 2:
-        benming_dizhi = benming_1[1]  # 本命干支的地支部分
+    if _bm_dz(benming_1):
+        benming_dizhi = _bm_dz(benming_1)
         if tiandipan:
             benming_shangshen = tiandipan.get(benming_dizhi)
             if benming_shangshen:
@@ -1349,8 +1360,8 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
     
     # 本命上神_2（女方）
     benming_2 = ke_data.get('benming_2')
-    if benming_2 and len(benming_2) >= 2:
-        benming_dizhi_2 = benming_2[1]
+    if _bm_dz(benming_2):
+        benming_dizhi_2 = _bm_dz(benming_2)
         if tiandipan:
             benming_shangshen_2 = tiandipan.get(benming_dizhi_2)
             if benming_shangshen_2:
@@ -1387,8 +1398,8 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
         }
     
     # 本命（男方）
-    if benming_1 and len(benming_1) >= 2:
-        benming_dizhi = benming_1[1]
+    if _bm_dz(benming_1):
+        benming_dizhi = _bm_dz(benming_1)
         benming_tianjiang = tianjiang_position.get(benming_dizhi, '') if isinstance(tianjiang_position, dict) else ''
         positions['本命'] = {
             '地支': benming_dizhi,
@@ -1397,8 +1408,8 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
     
     # 本命_2（女方）
     benming_2 = ke_data.get('benming_2')
-    if benming_2 and len(benming_2) >= 2:
-        benming_dizhi_2 = benming_2[1]
+    if _bm_dz(benming_2):
+        benming_dizhi_2 = _bm_dz(benming_2)
         benming_tianjiang_2 = tianjiang_position.get(benming_dizhi_2, '') if isinstance(tianjiang_position, dict) else ''
         positions['本命_2'] = {
             '地支': benming_dizhi_2,
@@ -1618,8 +1629,8 @@ def detect_all_for_weight(ke_data: dict) -> dict:
     
     # 本命上神（男方）
     benming_1 = ke_data.get('benming_1')
-    if benming_1 and len(benming_1) >= 2:
-        benming_dizhi = benming_1[1]  # 本命干支的地支部分
+    if _bm_dz(benming_1):
+        benming_dizhi = _bm_dz(benming_1)
         if tiandipan:
             benming_shangshen = tiandipan.get(benming_dizhi)
             if benming_shangshen:
@@ -1642,8 +1653,8 @@ def detect_all_for_weight(ke_data: dict) -> dict:
     
     # 本命上神_2（女方）
     benming_2 = ke_data.get('benming_2')
-    if benming_2 and len(benming_2) >= 2:
-        benming_dizhi_2 = benming_2[1]
+    if _bm_dz(benming_2):
+        benming_dizhi_2 = _bm_dz(benming_2)
         if tiandipan:
             benming_shangshen_2 = tiandipan.get(benming_dizhi_2)
             if benming_shangshen_2:
@@ -1680,8 +1691,8 @@ def detect_all_for_weight(ke_data: dict) -> dict:
         }
     
     # 本命（男方）
-    if benming_1 and len(benming_1) >= 2:
-        benming_dizhi = benming_1[1]
+    if _bm_dz(benming_1):
+        benming_dizhi = _bm_dz(benming_1)
         benming_tianjiang = tianjiang_position.get(benming_dizhi, '') if isinstance(tianjiang_position, dict) else ''
         positions['本命'] = {
             '地支': benming_dizhi,
@@ -1690,8 +1701,8 @@ def detect_all_for_weight(ke_data: dict) -> dict:
     
     # 本命_2（女方）
     benming_2 = ke_data.get('benming_2')
-    if benming_2 and len(benming_2) >= 2:
-        benming_dizhi_2 = benming_2[1]
+    if _bm_dz(benming_2):
+        benming_dizhi_2 = _bm_dz(benming_2)
         benming_tianjiang_2 = tianjiang_position.get(benming_dizhi_2, '') if isinstance(tianjiang_position, dict) else ''
         positions['本命_2'] = {
             '地支': benming_dizhi_2,
