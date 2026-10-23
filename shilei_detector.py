@@ -651,11 +651,11 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
     - 优先从 combination_key 提取 lx_xxx
     - 没有则用 meaning
     
-    维度判断（基于combination_key段数）：
-    - 4段 → 一维 → 计数1
-    - 5段 → 二维 → 计数2
-    - 6段 → 三维 → 计数3
-    - 7段 → 四维 → 计数4
+    维度判断（以 fujia_tiaojian 附加条件为准，与管理员系统一致）：
+    - 附加条件为空 → 一维 → 计数1
+    - 附加条件按 ';' 拆，1 个条件 → 二维 → 计数2
+    - 2 个条件 → 三维 → 计数3（依此类推）
+    注意：不要按 combination_key 的 '|' 段数判断，全库键都是 4 段。
     
     六亲区分：
     - trigger包含"遁干" → LQ_DUN_xxx（遁干六亲）
