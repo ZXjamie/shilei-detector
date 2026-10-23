@@ -887,6 +887,7 @@ def fetch_all_shilei_rules() -> dict:
             RETURN s.name AS shilei_name, l.name AS leixiang_name, coalesce(r.来意权重, r.权重) AS weight,
                    r.维度 AS dim, r.源符号 AS source_symbol, r.状态 AS status,
                    coalesce(r.combination_key, '') AS combination_key
+            ORDER BY shilei_name, dim, weight, leixiang_name
         """)
         # 维度只接受四个规范值；非法维度记录跳过并告警，不参与任何计分
         _VALID_DIMS = {'dizhi', 'tianjiang', 'liuqin', 'changsheng'}
