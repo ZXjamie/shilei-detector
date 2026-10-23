@@ -75,6 +75,34 @@ DIM_REL_WEIGHT = {}
 SHENSHA_COVER = {}
 SHENSHA_MAX = 25
 
+# 合法维度（关联类象.维度 只接受这四个值）
+_VALID_DIMS = {'dizhi', 'tianjiang', 'liuqin', 'changsheng'}
+
+# 维度 → 关联边 源符号前缀
+_DIM_SRC_PREFIX = {'dizhi': 'dz_', 'tianjiang': 'tj_', 'liuqin': 'lq_', 'changsheng': 'cs_'}
+
+
+def _route_filter(pos_lx: dict, dim: str, symbol: str, routes: dict) -> dict:
+    """按路由（源符号 + 类象）过滤某位置上该类象集。
+
+    routes 结构：{维度: {(源符号, 类象名), ...}}，由关联边 `源符号` 属性构建。
+    - 该维度没有任何路由信息时不过滤（兼容旧数据）
+    - 关联边没有 源符号（裸边）时写入 ('', 类象)，永远匹配不上 → 相当于不生效
+    """
+    if not pos_lx:
+        return pos_lx
+    allow = routes.get(dim)
+    if allow is None:
+        return pos_lx
+    pref = _DIM_SRC_PREFIX.get(dim, '') + symbol
+    return {k: v for k, v in pos_lx.items() if (pref, k) in allow}
+
+
+def _lq_symbol(key: str) -> str:
+    """LQ_妻财 / LQ_DUN_妻财 → 妻财（两个通道共用 lq_ 前缀的路由白名单）"""
+    return key[7:] if key.startswith('LQ_DUN_') else key[3:]
+
+
 # 同一乘关系的两侧类象映射（打分去重：同一事实不重复计分）
 COMBO_MAP = {}
 try:
@@ -752,12 +780,22 @@ def fetch_shilei_rules(shilei_name: str) -> dict:
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     
     with driver.session() as session:
-        # 查询事类关联的类象（含权重）
+        # 查询事类关联的类象（含权重、维度、源符号）
         leixiang_result = session.run("""
             MATCH (s:事类 {name: $name})-[r:关联类象]->(l:Leixiang)
-            RETURN l.name AS leixiang_name, coalesce(r.来意权重, r.权重) AS weight
+            WHERE r.状态 IS NULL OR r.状态 IN ['正常', '待定']
+            RETURN l.name AS leixiang_name, coalesce(r.来意权重, r.权重) AS weight,
+                   r.维度 AS dim, coalesce(r.源符号, '') AS source_symbol
         """, name=shilei_name)
-        leixiang_dict = {record['leixiang_name']: (record['weight'] if record['weight'] is not None else 1.0) for record in leixiang_result}
+        leixiang_dict = {}
+        routes = {}
+        for record in leixiang_result:
+            nm = record['leixiang_name']
+            w = record['weight'] if record['weight'] is not None else 1.0
+            leixiang_dict[nm] = w
+            dim = (record['dim'] or '').strip()
+            if dim in _VALID_DIMS:
+                routes.setdefault(dim, set()).add(((record['source_symbol'] or '').strip(), nm))
         
         # 查询事类关联的神煞（含权重）
         shensha_result = session.run("""
@@ -770,6 +808,7 @@ def fetch_shilei_rules(shilei_name: str) -> dict:
     
     return {
         'leixiang': leixiang_dict,
+        'routes': routes,
         'shensha': shensha_dict
     }
 
@@ -802,9 +841,11 @@ def fetch_all_shilei_rules() -> dict:
     result = {}
     with driver.session() as session:
         # 一次查询所有事类及其关联的类象（含权重和维度）
+        # 三态标记：只读取 状态 != "废弃" 的关联（正常、待定、NULL都算有效）
         leixiang_result = session.run("""
             MATCH (s:事类)-[r:关联类象]->(l:Leixiang)
-            RETURN s.name AS shilei_name, l.name AS leixiang_name, coalesce(r.来意权重, r.权重) AS weight, r.维度 AS dim
+            WHERE r.状态 IS NULL OR r.状态 IN ['正常', '待定']
+            RETURN s.name AS shilei_name, l.name AS leixiang_name, coalesce(r.来意权重, r.权重) AS weight, r.维度 AS dim, r.源符号 AS source_symbol
         """)
         # 维度只接受四个规范值；非法维度记录跳过并告警，不参与任何计分
         _VALID_DIMS = {'dizhi', 'tianjiang', 'liuqin', 'changsheng'}
@@ -819,8 +860,11 @@ def fetch_all_shilei_rules() -> dict:
                 _bad_dim.append((shilei_name, leixiang_name, record['dim']))
                 continue
             if shilei_name not in result:
-                result[shilei_name] = {'leixiang': {}, 'shensha': {}}
+                result[shilei_name] = {'leixiang': {}, 'shensha': {}, 'routes': {}}
             result[shilei_name]['leixiang'].setdefault(dim, {})[leixiang_name] = weight
+            # 路由级匹配：记录 (源符号, 类象) 白名单，供计分时过滤
+            result[shilei_name].setdefault('routes', {}).setdefault(dim, set()).add(
+                ((record['source_symbol'] or '').strip(), leixiang_name))
             # 维度关系权重：同一 (事类, 维度) 内所有关联类象共用一份，首次写入为准
             _key = (shilei_name, dim)
             if _key in DIM_REL_WEIGHT and abs(DIM_REL_WEIGHT[_key] - weight) > 1e-9:
@@ -1153,6 +1197,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
     # 5. 查询事类规则
     rules = fetch_shilei_rules(shilei_name)
     shilei_leixiang = rules['leixiang']
+    routes = rules.get('routes', {})
     shilei_shensha = rules['shensha']
     
     # 6. 计算证数（每个位置每个维度独立判断）
@@ -1181,7 +1226,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         # 地支维度
         if dizhi:
             dz_key = f'DZ_{dizhi}'
-            dz_leixiang = pos_leixiang.get(dz_key, {})
+            dz_leixiang = _route_filter(pos_leixiang.get(dz_key, {}), 'dizhi', dizhi, routes)
             matched_items = {k: v * shilei_leixiang[k] for k, v in dz_leixiang.items() if k in shilei_leixiang}
             if matched_items:
                 pos_zhengshu += 1
@@ -1199,7 +1244,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         # 天将维度
         if tianjiang:
             tj_key = f'TJ_{tianjiang}'
-            tj_leixiang = pos_leixiang.get(tj_key, {})
+            tj_leixiang = _route_filter(pos_leixiang.get(tj_key, {}), 'tianjiang', tianjiang, routes)
             matched_items = {k: v * shilei_leixiang[k] for k, v in tj_leixiang.items() if k in shilei_leixiang}
             if matched_items:
                 pos_zhengshu += 1
@@ -1216,7 +1261,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         
         # 六亲维度（从8008读取）
         for lq_key in liuqin_keys:
-            lq_leixiang = pos_leixiang.get(lq_key, {})
+            lq_leixiang = _route_filter(pos_leixiang.get(lq_key, {}), 'liuqin', _lq_symbol(lq_key), routes)
             matched_items = {k: v * shilei_leixiang[k] for k, v in lq_leixiang.items() if k in shilei_leixiang}
             if matched_items:
                 pos_zhengshu += 1
@@ -1235,7 +1280,7 @@ def detect_shilei(ke_data: dict, shilei_name: str, detail: bool = False) -> dict
         
         # 长生维度（从8008读取）
         for cs_key in changsheng_keys:
-                cs_leixiang = pos_leixiang.get(cs_key, {})
+                cs_leixiang = _route_filter(pos_leixiang.get(cs_key, {}), 'changsheng', cs_key[3:], routes)
                 matched_items = {k: v * shilei_leixiang[k] for k, v in cs_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
@@ -1436,6 +1481,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
     
     for shilei_name, rules in all_rules.items():
         shilei_leixiang = rules['leixiang']
+        routes = rules.get('routes', {})
         shilei_shensha = rules['shensha']
         zhengshu = 0
         position_details = {} if detail else None
@@ -1459,7 +1505,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             # 地支维度
             if dizhi:
                 dz_key = f'DZ_{dizhi}'
-                dz_leixiang = pos_leixiang.get(dz_key, {})
+                dz_leixiang = _route_filter(pos_leixiang.get(dz_key, {}), 'dizhi', dizhi, routes)
                 matched_items = {k: v * shilei_leixiang[k] for k, v in dz_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
@@ -1475,7 +1521,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             # 天将维度
             if tianjiang:
                 tj_key = f'TJ_{tianjiang}'
-                tj_leixiang = pos_leixiang.get(tj_key, {})
+                tj_leixiang = _route_filter(pos_leixiang.get(tj_key, {}), 'tianjiang', tianjiang, routes)
                 matched_items = {k: v * shilei_leixiang[k] for k, v in tj_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
@@ -1490,7 +1536,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             
             # 六亲维度（从8008读取）
             for lq_key in liuqin_keys:
-                lq_leixiang = pos_leixiang.get(lq_key, {})
+                lq_leixiang = _route_filter(pos_leixiang.get(lq_key, {}), 'liuqin', _lq_symbol(lq_key), routes)
                 matched_items = {k: v * shilei_leixiang[k] for k, v in lq_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
@@ -1507,7 +1553,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             
             # 长生维度（从8008读取）
             for cs_key in changsheng_keys:
-                cs_leixiang = pos_leixiang.get(cs_key, {})
+                cs_leixiang = _route_filter(pos_leixiang.get(cs_key, {}), 'changsheng', cs_key[3:], routes)
                 matched_items = {k: v * shilei_leixiang[k] for k, v in cs_leixiang.items() if k in shilei_leixiang}
                 if matched_items:
                     pos_zhengshu += 1
@@ -1729,6 +1775,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
     
     for shilei_name, rules in all_rules.items():
         shilei_leixiang = rules['leixiang']  # 现在是按维度分组的
+        routes = rules.get('routes', {})
         shilei_shensha = rules['shensha']
         total_score = 0.0
         lx_ch_total = 0.0   # 类象通道（千夫长+士兵）
@@ -1771,7 +1818,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             # 地支维度
             if dizhi:
                 dz_key = f'DZ_{dizhi}'
-                dz_leixiang = pos_leixiang.get(dz_key, {})
+                dz_leixiang = _route_filter(pos_leixiang.get(dz_key, {}), 'dizhi', dizhi, routes)
                 # 从地支维度读取权重
                 dizhi_weights = {**shilei_leixiang.get('leixiang_all', {}), **shilei_leixiang.get('dizhi', {})}
                 # 找出匹配的类象及其权重（含事类关联权重）
@@ -1810,7 +1857,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             # 天将维度
             if tianjiang:
                 tj_key = f'TJ_{tianjiang}'
-                tj_leixiang = pos_leixiang.get(tj_key, {})
+                tj_leixiang = _route_filter(pos_leixiang.get(tj_key, {}), 'tianjiang', tianjiang, routes)
                 # 从天将维度读取权重
                 tianjiang_weights = {**shilei_leixiang.get('leixiang_all', {}), **shilei_leixiang.get('tianjiang', {})}
                 matched_items = []
@@ -1845,7 +1892,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             
             # 地支六亲维度（从8008读取）
             for lq_key in liuqin_dz_keys:
-                lq_leixiang = pos_leixiang.get(lq_key, {})
+                lq_leixiang = _route_filter(pos_leixiang.get(lq_key, {}), 'liuqin', _lq_symbol(lq_key), routes)
                 # 从六亲维度读取权重
                 liuqin_weights = {**shilei_leixiang.get('leixiang_all', {}), **shilei_leixiang.get('liuqin', {})}
                 matched_items = []
@@ -1878,7 +1925,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             
             # 遁干六亲维度（从8008读取）
             for lq_key in liuqin_dun_keys:
-                lq_leixiang = pos_leixiang.get(lq_key, {})
+                lq_leixiang = _route_filter(pos_leixiang.get(lq_key, {}), 'liuqin', _lq_symbol(lq_key), routes)
                 # 从六亲维度读取权重（遁干六亲和地支六亲共用同一个权重表）
                 liuqin_weights = {**shilei_leixiang.get('leixiang_all', {}), **shilei_leixiang.get('liuqin', {})}
                 matched_items = []
@@ -1911,7 +1958,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
             
             # 长生维度（从8008读取）
             for cs_key in changsheng_keys:
-                cs_leixiang = pos_leixiang.get(cs_key, {})
+                cs_leixiang = _route_filter(pos_leixiang.get(cs_key, {}), 'changsheng', cs_key[3:], routes)
                 # 从长生维度读取权重
                 changsheng_weights = {**shilei_leixiang.get('leixiang_all', {}), **shilei_leixiang.get('changsheng', {})}
                 matched_items = []
