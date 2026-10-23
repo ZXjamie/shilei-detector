@@ -783,19 +783,28 @@ def fetch_shilei_rules(shilei_name: str) -> dict:
         # 查询事类关联的类象（含权重、维度、源符号）
         leixiang_result = session.run("""
             MATCH (s:事类 {name: $name})-[r:关联类象]->(l:Leixiang)
-            WHERE r.状态 IS NULL OR r.状态 IN ['正常', '待定']
             RETURN l.name AS leixiang_name, coalesce(r.来意权重, r.权重) AS weight,
-                   r.维度 AS dim, coalesce(r.源符号, '') AS source_symbol
+                   r.维度 AS dim, coalesce(r.源符号, '') AS source_symbol, r.状态 AS status
         """, name=shilei_name)
         leixiang_dict = {}
         routes = {}
+        mismatches = []
         for record in leixiang_result:
             nm = record['leixiang_name']
             w = record['weight'] if record['weight'] is not None else 1.0
-            leixiang_dict[nm] = w
             dim = (record['dim'] or '').strip()
+            src = (record['source_symbol'] or '').strip()
             if dim in _VALID_DIMS:
-                routes.setdefault(dim, set()).add(((record['source_symbol'] or '').strip(), nm))
+                if src and not src.startswith(_DIM_SRC_PREFIX.get(dim, '??')):
+                    mismatches.append((shilei_name, nm, dim, src))
+            status = (record['status'] or '').strip()
+            if status not in ('', '正常', '待定'):
+                continue
+            leixiang_dict[nm] = w
+            if dim in _VALID_DIMS:
+                routes.setdefault(dim, set()).add((src, nm))
+        for _pm in mismatches[:20]:
+            print(f"  ❌ 源符号前缀与维度不符（该路由永不命中）: {_pm[0]} → {_pm[1]}  维度={_pm[2]}  源符号={_pm[3]}")
         
         # 查询事类关联的神煞（含权重）
         shensha_result = session.run("""
@@ -844,13 +853,14 @@ def fetch_all_shilei_rules() -> dict:
         # 三态标记：只读取 状态 != "废弃" 的关联（正常、待定、NULL都算有效）
         leixiang_result = session.run("""
             MATCH (s:事类)-[r:关联类象]->(l:Leixiang)
-            WHERE r.状态 IS NULL OR r.状态 IN ['正常', '待定']
-            RETURN s.name AS shilei_name, l.name AS leixiang_name, coalesce(r.来意权重, r.权重) AS weight, r.维度 AS dim, r.源符号 AS source_symbol
+            RETURN s.name AS shilei_name, l.name AS leixiang_name, coalesce(r.来意权重, r.权重) AS weight,
+                   r.维度 AS dim, r.源符号 AS source_symbol, r.状态 AS status
         """)
         # 维度只接受四个规范值；非法维度记录跳过并告警，不参与任何计分
         _VALID_DIMS = {'dizhi', 'tianjiang', 'liuqin', 'changsheng'}
         _bad_dim = []       # [(事类, 类象, 原始维度)]
         _dim_conflict = []  # [((事类,维度), 首次值, 冲突值)]
+        _prefix_mismatch = []  # [(事类, 类象, 维度, 源符号)] 源符号前缀与维度不符 → 该路由永远匹配不上
         for record in leixiang_result:
             shilei_name = record['shilei_name']
             leixiang_name = record['leixiang_name']
@@ -859,12 +869,19 @@ def fetch_all_shilei_rules() -> dict:
             if dim not in _VALID_DIMS:
                 _bad_dim.append((shilei_name, leixiang_name, record['dim']))
                 continue
+            src = (record['source_symbol'] or '').strip()
+            # 数据体检：源符号前缀必须与维度一致（dz_/tj_/lq_/cs_），否则该路由永不命中
+            if src and not src.startswith(_DIM_SRC_PREFIX.get(dim, '??')):
+                _prefix_mismatch.append((shilei_name, leixiang_name, dim, src))
+            # 三态标记：废弃的边不参与计分（NULL/正常/待定 有效）
+            status = (record['status'] or '').strip()
+            if status not in ('', '正常', '待定'):
+                continue
             if shilei_name not in result:
                 result[shilei_name] = {'leixiang': {}, 'shensha': {}, 'routes': {}}
             result[shilei_name]['leixiang'].setdefault(dim, {})[leixiang_name] = weight
             # 路由级匹配：记录 (源符号, 类象) 白名单，供计分时过滤
-            result[shilei_name].setdefault('routes', {}).setdefault(dim, set()).add(
-                ((record['source_symbol'] or '').strip(), leixiang_name))
+            result[shilei_name].setdefault('routes', {}).setdefault(dim, set()).add((src, leixiang_name))
             # 维度关系权重：同一 (事类, 维度) 内所有关联类象共用一份，首次写入为准
             _key = (shilei_name, dim)
             if _key in DIM_REL_WEIGHT and abs(DIM_REL_WEIGHT[_key] - weight) > 1e-9:
@@ -983,11 +1000,15 @@ def fetch_all_shilei_rules() -> dict:
                 })
 
         SHENSHA_MAX = max(SHENSHA_COVER.values()) if SHENSHA_COVER else 25
-        print(f"[维度关系权重] 已加载 {len(DIM_REL_WEIGHT)} 组 · 神煞覆盖上限 {SHENSHA_MAX} · 跳过非法维度 {len(_bad_dim)} 条 · 系数冲突 {len(_dim_conflict)} 个")
+        print(f"[维度关系权重] 已加载 {len(DIM_REL_WEIGHT)} 组 · 神煞覆盖上限 {SHENSHA_MAX} · 跳过非法维度 {len(_bad_dim)} 条 · 系数冲突 {len(_dim_conflict)} 个 · 源符号前缀不符 {len(_prefix_mismatch)} 条")
         for _b in _bad_dim[:10]:
             print(f"  ⚠️  非法维度已跳过: {_b[0]} → {_b[1]}  维度={_b[2]!r}")
         if len(_bad_dim) > 10:
             print(f"  ⚠️  其余 {len(_bad_dim)-10} 条省略")
+        for _pm in _prefix_mismatch[:20]:
+            print(f"  ❌ 源符号前缀与维度不符（该路由永不命中）: {_pm[0]} → {_pm[1]}  维度={_pm[2]}  源符号={_pm[3]}，应为 {_DIM_SRC_PREFIX.get(_pm[2],'?')}*")
+        if len(_prefix_mismatch) > 20:
+            print(f"  ❌ 其余 {len(_prefix_mismatch)-20} 条省略")
         for _c in _dim_conflict[:10]:
             print(f"  ⚠️  系数冲突（保留首次值）: {_c[0]}  首次={_c[1]}  冲突值={_c[2]}")
         if len(_dim_conflict) > 10:
