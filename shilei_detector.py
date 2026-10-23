@@ -6,6 +6,7 @@
 import re
 import sys
 import json
+import math
 from itertools import combinations
 from neo4j import GraphDatabase
 
@@ -1892,12 +1893,11 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 one_dim_items = [(lx, _ew(lx, w), sw) for lx, w, sw in matched_items if _ew(lx, w) == 1]
                 multi_dim_items = [(lx, _ew(lx, w), sw) for lx, w, sw in matched_items if _ew(lx, w) > 1]
                 # 一维只取事类权重最大的1个，多维正常累加
-                total_weight = 0.0
+                _parts = []
                 if one_dim_items:
-                    max_sw = max(sw for _, _, sw in one_dim_items)
-                    total_weight += max_sw  # 士兵（一维类象）只计一次，不累加
-                for _, w, sw in multi_dim_items:
-                    total_weight += w * sw * MULTI_COEF  # 多维类象：维度倍数 × 事类权重 × 千夫长系数
+                    _parts.append(max(sw for _, _, sw in one_dim_items))  # 士兵（一维类象）只计一次，不累加
+                _parts.extend(w * sw * MULTI_COEF for _, w, sw in multi_dim_items)
+                total_weight = math.fsum(_parts)  # 多维类象：维度倍数 × 事类权重 × 千夫长系数
                 # 格式化输出
                 matched_str = []
                 for lx_name, weight, shilei_weight in matched_items:
@@ -1931,12 +1931,11 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                         matched_items.append((lx_name, weight, shilei_weight))
                 one_dim_items = [(lx, _ew(lx, w), sw) for lx, w, sw in matched_items if _ew(lx, w) == 1]
                 multi_dim_items = [(lx, _ew(lx, w), sw) for lx, w, sw in matched_items if _ew(lx, w) > 1]
-                total_weight = 0.0
+                _parts = []
                 if one_dim_items:
-                    max_sw = max(sw for _, _, sw in one_dim_items)
-                    total_weight += max_sw  # 士兵（一维类象）只计一次，不累加
-                for _, w, sw in multi_dim_items:
-                    total_weight += w * sw * MULTI_COEF
+                    _parts.append(max(sw for _, _, sw in one_dim_items))  # 士兵（一维类象）只计一次，不累加
+                _parts.extend(w * sw * MULTI_COEF for _, w, sw in multi_dim_items)
+                total_weight = math.fsum(_parts)
                 matched_str = []
                 for lx_name, weight, shilei_weight in matched_items:
                     if shilei_weight != 1:
@@ -1963,12 +1962,11 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                         matched_items.append((lx_name, weight, shilei_weight))
                 one_dim_items = [(lx, _ew(lx, w), sw) for lx, w, sw in matched_items if _ew(lx, w) == 1]
                 multi_dim_items = [(lx, _ew(lx, w), sw) for lx, w, sw in matched_items if _ew(lx, w) > 1]
-                total_weight = 0.0
+                _parts = []
                 if one_dim_items:
-                    max_sw = max(sw for _, _, sw in one_dim_items)
-                    total_weight += max_sw  # 士兵（一维类象）只计一次，不累加
-                for _, w, sw in multi_dim_items:
-                    total_weight += w * sw * MULTI_COEF
+                    _parts.append(max(sw for _, _, sw in one_dim_items))  # 士兵（一维类象）只计一次，不累加
+                _parts.extend(w * sw * MULTI_COEF for _, w, sw in multi_dim_items)
+                total_weight = math.fsum(_parts)
                 matched_str = []
                 for lx_name, weight, shilei_weight in matched_items:
                     if shilei_weight != 1:
@@ -1996,12 +1994,11 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                         matched_items.append((lx_name, weight, shilei_weight))
                 one_dim_items = [(lx, _ew(lx, w), sw) for lx, w, sw in matched_items if _ew(lx, w) == 1]
                 multi_dim_items = [(lx, _ew(lx, w), sw) for lx, w, sw in matched_items if _ew(lx, w) > 1]
-                total_weight = 0.0
+                _parts = []
                 if one_dim_items:
-                    max_sw = max(sw for _, _, sw in one_dim_items)
-                    total_weight += max_sw  # 士兵（一维类象）只计一次，不累加
-                for _, w, sw in multi_dim_items:
-                    total_weight += w * sw * MULTI_COEF
+                    _parts.append(max(sw for _, _, sw in one_dim_items))  # 士兵（一维类象）只计一次，不累加
+                _parts.extend(w * sw * MULTI_COEF for _, w, sw in multi_dim_items)
+                total_weight = math.fsum(_parts)
                 matched_str = []
                 for lx_name, weight, shilei_weight in matched_items:
                     if shilei_weight != 1:
@@ -2029,12 +2026,11 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                         matched_items.append((lx_name, weight, shilei_weight))
                 one_dim_items = [(lx, _ew(lx, w), sw) for lx, w, sw in matched_items if _ew(lx, w) == 1]
                 multi_dim_items = [(lx, _ew(lx, w), sw) for lx, w, sw in matched_items if _ew(lx, w) > 1]
-                total_weight = 0.0
+                _parts = []
                 if one_dim_items:
-                    max_sw = max(sw for _, _, sw in one_dim_items)
-                    total_weight += max_sw  # 士兵（一维类象）只计一次，不累加
-                for _, w, sw in multi_dim_items:
-                    total_weight += w * sw * MULTI_COEF
+                    _parts.append(max(sw for _, _, sw in one_dim_items))  # 士兵（一维类象）只计一次，不累加
+                _parts.extend(w * sw * MULTI_COEF for _, w, sw in multi_dim_items)
+                total_weight = math.fsum(_parts)
                 matched_str = []
                 for lx_name, weight, shilei_weight in matched_items:
                     if shilei_weight != 1:
@@ -2056,7 +2052,8 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                 shensha_list = shensha_data[dizhi]
                 pos_shensha = {s.get('name', '') for s in shensha_list if isinstance(s, dict)}
             shensha_intersection = {name for name in pos_shensha if name in shilei_shensha}
-            shensha_weighted_score = sum(shilei_shensha[name] for name in shensha_intersection)
+            # 集合迭代顺序随哈希种子变化 → fsum + sorted 保证与顺序无关
+            shensha_weighted_score = math.fsum(sorted(shilei_shensha[name] for name in shensha_intersection))
             
             # 应用神煞聚集效应：同一位置命中多个神煞时额外加分
             # 公式：基础分 × (1 + (命中数-1) × 聚集系数)
@@ -2136,7 +2133,7 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     _n = _k[3:]
                     if ls.get('changsheng', {}).get(_n):
                         ls_items.append(('changsheng', _n, _unit_price('changsheng', '长生'), f"{_n}(长生)"))
-                for _s in pos_shensha:
+                for _s in sorted(pos_shensha):
                     if ls.get('shensha', {}).get(_s):
                         ls_items.append(('shensha', _s, _unit_price('shensha', '神煞'), f"{_s}(神煞)"))
                 matched_rates = {}   # {(kind, name): [准验率, ...]}
@@ -2167,17 +2164,21 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     matched_hits.append(f"配位:{_pa}同{_pb}(×{1+_prate:.3f})")
 
                 # 入账：单价 × Σ(1+准验率)；未命中配位则 ×1
+                # 注意：ls_items / matched_rates 的迭代顺序可能随进程哈希种子变化，
+                # 累加必须用 fsum（精确求和、与顺序无关），否则末位差会经 round(x,1) 放大成 0.1
+                ls_parts = []
                 for _kind, _name, _price, _label in ls_items:
                     if _price <= 0:
                         continue
                     _rs = matched_rates.get((_kind, _name), [])
                     if _rs:
-                        _factor = sum(1 + r for r in _rs)
+                        _factor = math.fsum(1 + r for r in _rs)
                         ls_hits.append(f"{_label}×{_factor:.3f}")
                     else:
                         _factor = 1.0
                         ls_hits.append(_label)
-                    ls_raw += _price * _factor
+                    ls_parts.append(_price * _factor)
+                ls_raw = math.fsum(ls_parts)
                 ls_hits.extend(matched_hits)
 
             ls_weight = WEIGHT_CONFIG.get('类神', 1.0) * LS_SHILEI_MULT.get(shilei_name, 1.0)
