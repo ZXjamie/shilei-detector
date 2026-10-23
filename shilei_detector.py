@@ -1537,6 +1537,11 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
     
     for shilei_name, rules in all_rules.items():
         shilei_leixiang = rules['leixiang']
+        # 规则表按维度分组：{维度: {类象名: 权重}}；取权重必须按维度，不能拿类象名去 in 整张表
+        w_dz = shilei_leixiang.get('dizhi', {})
+        w_tj = shilei_leixiang.get('tianjiang', {})
+        w_lq = shilei_leixiang.get('liuqin', {})
+        w_cs = shilei_leixiang.get('changsheng', {})
         routes = rules.get('routes', {})
         shilei_shensha = rules['shensha']
         zhengshu = 0
@@ -1562,7 +1567,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             if dizhi:
                 dz_key = f'DZ_{dizhi}'
                 dz_leixiang = _route_filter(pos_leixiang.get(dz_key, {}), 'dizhi', dizhi, routes, pos_leixiang.get('__ck__', {}).get(dz_key, {}))
-                matched_items = {k: v * shilei_leixiang[k] for k, v in dz_leixiang.items() if k in shilei_leixiang}
+                matched_items = {k: v * w_dz[k] for k, v in dz_leixiang.items() if k in w_dz}
                 if matched_items:
                     pos_zhengshu += 1
                     if detail:
@@ -1578,7 +1583,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             if tianjiang:
                 tj_key = f'TJ_{tianjiang}'
                 tj_leixiang = _route_filter(pos_leixiang.get(tj_key, {}), 'tianjiang', tianjiang, routes, pos_leixiang.get('__ck__', {}).get(tj_key, {}))
-                matched_items = {k: v * shilei_leixiang[k] for k, v in tj_leixiang.items() if k in shilei_leixiang}
+                matched_items = {k: v * w_tj[k] for k, v in tj_leixiang.items() if k in w_tj}
                 if matched_items:
                     pos_zhengshu += 1
                     if detail:
@@ -1593,7 +1598,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             # 六亲维度（从8008读取）
             for lq_key in liuqin_keys:
                 lq_leixiang = _route_filter(pos_leixiang.get(lq_key, {}), 'liuqin', _lq_symbol(lq_key), routes, pos_leixiang.get('__ck__', {}).get(lq_key, {}))
-                matched_items = {k: v * shilei_leixiang[k] for k, v in lq_leixiang.items() if k in shilei_leixiang}
+                matched_items = {k: v * w_lq[k] for k, v in lq_leixiang.items() if k in w_lq}
                 if matched_items:
                     pos_zhengshu += 1
                     if detail:
@@ -1610,7 +1615,7 @@ def detect_all_shilei(ke_data: dict, detail: bool = False) -> dict:
             # 长生维度（从8008读取）
             for cs_key in changsheng_keys:
                 cs_leixiang = _route_filter(pos_leixiang.get(cs_key, {}), 'changsheng', cs_key[3:], routes, pos_leixiang.get('__ck__', {}).get(cs_key, {}))
-                matched_items = {k: v * shilei_leixiang[k] for k, v in cs_leixiang.items() if k in shilei_leixiang}
+                matched_items = {k: v * w_cs[k] for k, v in cs_leixiang.items() if k in w_cs}
                 if matched_items:
                     pos_zhengshu += 1
                     if detail:
