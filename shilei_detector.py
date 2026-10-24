@@ -70,6 +70,10 @@ PEIWEI_EDGES = []
 # 双神煞配位边（同位口径）
 PEIWEI_PAIRS = []
 
+# 配课边：[{cond: 条件地支, target: 被增强源符号, cc: conditions_code, rate: 准验率}]
+# 课式级条件（非同位）：如日支=亥 时，未系符号单价乘 (1+准验率)
+PEIKE_EDGES = []
+
 # 维度关系权重：{(事类, 维度): 权重}，来自 关联类象.r.权重
 DIM_REL_WEIGHT = {}
 # 神煞覆盖：{事类: 关联神煞条数}，神煞维度关系权重 = SHENSHA_MAX ÷ 覆盖
@@ -1050,6 +1054,28 @@ def fetch_all_shilei_rules() -> dict:
         if len(_dim_conflict) > 10:
             print(f"  ⚠️  其余 {len(_dim_conflict)-10} 个省略")
         print(f"[配位边] 已加载 {len(PEIWEI_EDGES)} 条单神煞 + {len(PEIWEI_PAIRS)} 条双神煞")
+
+        # 配课边：课式级条件（非同位），如「日支=亥 → 未系增强」
+        global PEIKE_EDGES
+        PEIKE_EDGES = []
+        for record in session.run("""
+            MATCH (a:DiZhi)-[r:配课]->(b:DiZhi)
+            RETURN a.name AS cond, b.name AS target,
+                   r.conditions_code AS cc, r.准验率 AS rate
+        """):
+            if record['cond'] and record['target']:
+                cc_str = record['cc'] or '{}'
+                try:
+                    cc = json.loads(cc_str) if isinstance(cc_str, str) else cc_str
+                except:
+                    cc = {}
+                PEIKE_EDGES.append({
+                    'cond': record['cond'],
+                    'target': record['target'],
+                    'cc': cc,
+                    'rate': float(record['rate']) if record['rate'] is not None else 0.0,
+                })
+        print(f"[配课边] 已加载 {len(PEIKE_EDGES)} 条")
 
     driver.close()
     return result
@@ -2162,6 +2188,57 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     for _ps in (_pa, _pb):
                         matched_rates.setdefault(('shensha', _ps), []).append(_prate)
                     matched_hits.append(f"配位:{_pa}同{_pb}(×{1+_prate:.3f})")
+
+                # 配课边：课式级条件（非同位），与配位一样是**双向加成**——
+                # 起点与终点各自在自己出现的位置上生效。
+                # 如「日支=亥 ⇄ 未」：课里每个亥位、每个未位都乘 (1+准验率)。
+                for pe in PEIKE_EDGES:
+                    _krate = pe['rate']
+                    if _krate <= 0:
+                        continue
+                    _cc_type = pe['cc'].get('type', 'rizhi')
+                    
+                    # 类型1：日支条件（现有）
+                    if _cc_type == 'rizhi' and ri_zhi and pe['cond'] == ri_zhi:
+                        if dizhi == pe['cond'] or dizhi == pe['target']:
+                            matched_rates.setdefault(('dizhi', dizhi), []).append(_krate)
+                            matched_hits.append(
+                                f"配课:{pe['cond']}⇄{pe['target']}@{dizhi}(×{1+_krate:.3f})")
+                    
+                    # 类型2：乘关系（新增）- 位置层面判断
+                    elif _cc_type == 'cheng':
+                        _tj = pe['cc'].get('tianjiang', '')
+                        _dz = pe['cc'].get('dizhi', '')
+                        if dizhi == _dz and tianjiang == _tj:
+                            # 地支和天将都获得加成（双向）
+                            matched_rates.setdefault(('dizhi', dizhi), []).append(_krate)
+                            matched_rates.setdefault(('tianjiang', tianjiang), []).append(_krate)
+                            matched_hits.append(
+                                f"配课:{_tj}乘{_dz}@{pos_name}(×{1+_krate:.3f})")
+                    
+                    # 类型3：加关系（新增）- 位置层面判断
+                    elif _cc_type == 'jia':
+                        _tianpan = pe['cc'].get('tianpan', '')
+                        _dipan = pe['cc'].get('dipan', '')
+                        # 判断该位置是否满足"天盘加地盘"
+                        if dizhi == _dipan:
+                            _actual_tianpan = tiandipan.get(_dipan, '')
+                            if _actual_tianpan == _tianpan:
+                                matched_rates.setdefault(('dizhi', dizhi), []).append(_krate)
+                                matched_hits.append(
+                                    f"配课:{_tianpan}加{_dipan}@{pos_name}(×{1+_krate:.3f})")
+                    
+                    # 类型4：临关系（新增）- 位置层面判断
+                    elif _cc_type == 'lin':
+                        _tj = pe['cc'].get('tianjiang', '')
+                        _dipan = pe['cc'].get('dipan', '')
+                        # 临 = 天将乘天盘，天盘加地盘
+                        # 即：该位置地支=地盘，该位置天将=天将
+                        if dizhi == _dipan and tianjiang == _tj:
+                            matched_rates.setdefault(('dizhi', dizhi), []).append(_krate)
+                            matched_rates.setdefault(('tianjiang', tianjiang), []).append(_krate)
+                            matched_hits.append(
+                                f"配课:{_tj}临{_dipan}@{pos_name}(×{1+_krate:.3f})")
 
                 # 入账：单价 × Σ(1+准验率)；未命中配位则 ×1
                 # 注意：ls_items / matched_rates 的迭代顺序可能随进程哈希种子变化，
