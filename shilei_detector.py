@@ -81,10 +81,11 @@ SHENSHA_COVER = {}
 SHENSHA_MAX = 25
 
 # 合法维度（关联类象.维度 只接受这四个值）
-_VALID_DIMS = {'dizhi', 'tianjiang', 'liuqin', 'changsheng'}
+_VALID_DIMS = {'dizhi', 'tianjiang', 'liuqin', 'changsheng', 'shenshalx'}
 
 # 维度 → 关联边 源符号前缀
-_DIM_SRC_PREFIX = {'dizhi': 'dz_', 'tianjiang': 'tj_', 'liuqin': 'lq_', 'changsheng': 'cs_'}
+_DIM_SRC_PREFIX = {'dizhi': 'dz_', 'tianjiang': 'tj_', 'liuqin': 'lq_',
+                   'changsheng': 'cs_', 'shenshalx': 'ss_'}
 
 
 def _route_filter(pos_lx: dict, dim: str, symbol: str, routes: dict, pos_ck=None) -> dict:
@@ -438,6 +439,16 @@ TIANJIANG_FULL = {
 # 十二长生顺序
 CHANGSHENG_ORDER = ['长生', '沐浴', '冠带', '临官', '帝旺', '衰', '病', '死', '墓', '绝', '胎', '养']
 
+# 五行十二长生位置（六壬规则：土水同宫）
+# 用于配课关系中动态计算沐浴位
+CHANGSHENG_POSITIONS = {
+    '木': {'长生': '亥', '沐浴': '子', '冠带': '丑', '临官': '寅', '帝旺': '卯', '衰': '辰', '病': '巳', '死': '午', '墓': '未', '绝': '申', '胎': '酉', '养': '戌'},
+    '火': {'长生': '寅', '沐浴': '卯', '冠带': '辰', '临官': '巳', '帝旺': '午', '衰': '未', '病': '申', '死': '酉', '墓': '戌', '绝': '亥', '胎': '子', '养': '丑'},
+    '土': {'长生': '申', '沐浴': '酉', '冠带': '戌', '临官': '亥', '帝旺': '子', '衰': '丑', '病': '寅', '死': '卯', '墓': '辰', '绝': '巳', '胎': '午', '养': '未'},  # 土水同宫
+    '金': {'长生': '巳', '沐浴': '午', '冠带': '未', '临官': '申', '帝旺': '酉', '衰': '戌', '病': '亥', '死': '子', '墓': '丑', '绝': '寅', '胎': '卯', '养': '辰'},
+    '水': {'长生': '申', '沐浴': '酉', '冠带': '戌', '临官': '亥', '帝旺': '子', '衰': '丑', '病': '寅', '死': '卯', '墓': '辰', '绝': '巳', '胎': '午', '养': '未'},
+}
+
 # 位置总数（仅用于统计展示；覆盖率缩放已废除，不再参与得分）
 POSITION_TOTAL = 12
 
@@ -701,7 +712,7 @@ def extract_leixiang_from_8008(leixiang_data: dict) -> dict:
             # 天将/地支/天干类象：原始类别（地支类象/天将类象）不含位置语义，
             # trigger为"X在课传年命"等，归入全局桶。
             # 但新增位置类别（占时/行年/本命等）的trigger带位置名，保留位置。
-            if item_id.startswith(('TJ_', 'DZ_', 'TG_')) and pos_name not in POSITION_NAMES:
+            if item_id.startswith(('TJ_', 'DZ_', 'TG_', 'SS_')) and pos_name not in POSITION_NAMES:
                 pos_name = '__global__'
             
             # 初始化位置
@@ -894,8 +905,7 @@ def fetch_all_shilei_rules() -> dict:
                    coalesce(r.combination_key, '') AS combination_key
             ORDER BY shilei_name, dim, weight, leixiang_name
         """)
-        # 维度只接受四个规范值；非法维度记录跳过并告警，不参与任何计分
-        _VALID_DIMS = {'dizhi', 'tianjiang', 'liuqin', 'changsheng'}
+        # 维度只接受规范值；非法维度记录跳过并告警，不参与任何计分
         _bad_dim = []       # [(事类, 类象, 原始维度)]
         _dim_conflict = []  # [((事类,维度), 首次值, 冲突值)]
         _prefix_mismatch = []  # [(事类, 类象, 维度, 源符号)] 源符号前缀与维度不符 → 该路由永远匹配不上
@@ -2071,7 +2081,35 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                     'matched': matched_str
                 }
                 dim_matches['长生'] = total_weight
-            
+
+            # 神煞类象维度（:神煞类象 节点产出，源符号前缀 ss_）
+            ss_keys = [k for k in pos_leixiang.keys() if k.startswith('SS_')]
+            if ss_keys:
+                shenshalx_weights = {**shilei_leixiang.get('leixiang_all', {}), **shilei_leixiang.get('shenshalx', {})}
+                ss_matched = []
+                for ss_key in ss_keys:
+                    ss_name = ss_key[3:]
+                    ss_leixiang = _route_filter(pos_leixiang.get(ss_key, {}), 'shenshalx', ss_name, routes, pos_leixiang.get('__ck__', {}).get(ss_key, {}))
+                    for lx_name, weight in ss_leixiang.items():
+                        if lx_name in shenshalx_weights:
+                            ss_matched.append((ss_name, lx_name, weight, shenshalx_weights[lx_name]))
+                if ss_matched:
+                    one_dim = [(n, lx, _ew(lx, w), sw) for n, lx, w, sw in ss_matched if _ew(lx, w) == 1]
+                    multi_dim = [(n, lx, _ew(lx, w), sw) for n, lx, w, sw in ss_matched if _ew(lx, w) > 1]
+                    _parts = []
+                    if one_dim:
+                        _parts.append(max(sw for _, _, _, sw in one_dim))
+                    _parts.extend(w * sw * MULTI_COEF for _, _, w, sw in multi_dim)
+                    if _parts:
+                        dim_matches['神煞类象'] = math.fsum(_parts)
+                        dim_details['神煞类象'] = {
+                            'symbol': ','.join(sorted({n for n, _, _, _ in ss_matched})),
+                            'matched': [
+                                (f"{lx}×{sw:.1f}" if sw != 1 else (f"{lx}×{w}" if w > 1 else lx))
+                                for _, lx, w, sw in ss_matched
+                            ]
+                        }
+
             # 神煞维度（含事类关联权重）
             pos_shensha = set()
             if dizhi and dizhi in shensha_data:
@@ -2239,6 +2277,69 @@ def detect_all_for_weight(ke_data: dict) -> dict:
                             matched_rates.setdefault(('tianjiang', tianjiang), []).append(_krate)
                             matched_hits.append(
                                 f"配课:{_tj}临{_dipan}@{pos_name}(×{1+_krate:.3f})")
+                    
+                    # 类型5：沐浴条件（新增）- 课式级判断
+                    # conditions_code: {"type": "muyu", "dizhi": "亥"}
+                    # 含义：当课式同时出现指定地支和沐浴位时，该地支获得增强
+                    elif _cc_type == 'muyu':
+                        _target_dz = pe['cc'].get('dizhi', '')
+                        # 计算日干五行的沐浴位
+                        if ri_gan:
+                            _rigan_wuxing = TIANGAN_WUXING.get(ri_gan, '')
+                            _muyu_dizhi = CHANGSHENG_POSITIONS.get(_rigan_wuxing, {}).get('沐浴', '')
+                            # 判断课式是否同时有 _target_dz 和 _muyu_dizhi
+                            if _target_dz and _muyu_dizhi:
+                                # 遍历所有位置，判断是否同时出现
+                                _has_target = False
+                                _has_muyu = False
+                                for _pn in POSITION_NAMES:
+                                    _pos_info = positions.get(_pn, {})
+                                    _pos_dz = _pos_info.get('地支', '')
+                                    if _pos_dz == _target_dz:
+                                        _has_target = True
+                                    if _pos_dz == _muyu_dizhi:
+                                        _has_muyu = True
+                                # 如果当前地支是目标地支，且课式同时有沐浴位，则增强
+                                if dizhi == _target_dz and _has_target and _has_muyu:
+                                    matched_rates.setdefault(('dizhi', dizhi), []).append(_krate)
+                                    matched_hits.append(
+                                        f"配课:{_target_dz}遇沐浴({_muyu_dizhi})@{pos_name}(×{1+_krate:.3f})")
+                    
+                    # 类型6：沐浴+六亲条件（新增）- 课式级判断
+                    # conditions_code: {"type": "muyu_liuqin", "liuqin": "子孙"}
+                    # 含义：当课式同时出现沐浴位和指定六亲时，沐浴位获得增强
+                    elif _cc_type == 'muyu_liuqin':
+                        _target_liuqin = pe['cc'].get('liuqin', '')
+                        # 计算日干五行的沐浴位
+                        if ri_gan:
+                            _rigan_wuxing = TIANGAN_WUXING.get(ri_gan, '')
+                            _muyu_dizhi = CHANGSHENG_POSITIONS.get(_rigan_wuxing, {}).get('沐浴', '')
+                            if _muyu_dizhi and _target_liuqin:
+                                # 判断课式是否有沐浴位
+                                _has_muyu = False
+                                for _pn in POSITION_NAMES:
+                                    _pos_info = positions.get(_pn, {})
+                                    _pos_dz = _pos_info.get('地支', '')
+                                    if _pos_dz == _muyu_dizhi:
+                                        _has_muyu = True
+                                        break
+                                # 判断课式是否有指定六亲
+                                _has_liuqin = False
+                                for _pn in POSITION_NAMES:
+                                    _pos_leixiang = get_pos_leixiang(leixiang_by_symbol, _pn)
+                                    _lq_keys = [k for k in _pos_leixiang.keys() if k.startswith('LQ_') and not k.startswith('LQ_DUN_')]
+                                    for _lq_key in _lq_keys:
+                                        _lq_name = _lq_key[3:]  # 去掉LQ_前缀
+                                        if _lq_name == _target_liuqin:
+                                            _has_liuqin = True
+                                            break
+                                    if _has_liuqin:
+                                        break
+                                # 如果当前地支是沐浴位，且课式同时有指定六亲，则增强
+                                if dizhi == _muyu_dizhi and _has_muyu and _has_liuqin:
+                                    matched_rates.setdefault(('dizhi', dizhi), []).append(_krate)
+                                    matched_hits.append(
+                                        f"配课:沐浴遇{_target_liuqin}@{pos_name}(×{1+_krate:.3f})")
 
                 # 入账：单价 × Σ(1+准验率)；未命中配位则 ×1
                 # 注意：ls_items / matched_rates 的迭代顺序可能随进程哈希种子变化，
